@@ -32,11 +32,12 @@ except ImportError:
 import lark_oapi as lark
 from lark_oapi import EventDispatcherHandler, LogLevel
 
-from core.feishu_client import reply_message, reply_card, send_message_to_user, send_card_to_user
-from core.cards import welcome_card, progress_card, result_card, error_card, help_card
+from core.feishu_client import reply_message, reply_card, send_message_to_user, send_card_to_user, create_document_with_content
+from core.cards import welcome_card, progress_card, result_card, error_card, help_card, make_card
 from core.llm import chat_completion
-from planner.run import run_planning, detect_mode
-from planner.prompts import PLANNER_SYSTEM
+from core.utils import truncate_for_display
+from planner.run import run_planning, generate_doc, detect_mode
+from planner.prompts import PLANNER_SYSTEM, DOC_TYPES, DOC_MENU, DOC_CATEGORY_TYPES, detect_doc_category, build_doc_menu
 
 # ── 日志 ─────────────────────────────────────────────────────
 
@@ -183,6 +184,21 @@ _CHAT_SYSTEM = PLANNER_SYSTEM + """
 """
 
 
+def _generate_short_title(topic: str) -> str:
+    """用 LLM 将冗长话题凝练为文档标题（≤15字）。"""
+    try:
+        result = chat_completion(
+            provider="deepseek",
+            system="将用户输入凝练为一个文档标题。要求：≤15个中文字，不加标点，保留核心主题和关键限定词。只输出标题，不要解释。",
+            user=topic,
+        ).strip().strip("\"'「」《》【】")
+        if result and len(result) <= 30:
+            return result
+    except Exception:
+        pass
+    return topic[:20]
+
+
 def _chat_reply(text: str) -> str:
     """轻量对话：单轮 LLM 回复。"""
     try:
@@ -193,10 +209,210 @@ def _chat_reply(text: str) -> str:
     return chat_completion(provider="deepseek", system=system, user=text).strip()
 
 
+# ── 文档交付 ─────────────────────────────────────────────────
+
+_pending_docs: dict[str, dict] = {}
+_pending_docs_lock = threading.Lock()
+_DOC_SESSION_TTL = 1800  # 30 min
+
+_DOC_DESCRIPTIONS = {
+    "brief": "执行 Brief — 可直接发给团队的方案摘要",
+    "calendar": "内容日历 — 按周排列的内容排期表",
+    "timeline": "里程碑时间线 — 关键节点 + 依赖 + 风险",
+    "decision": "决策备忘 — 一页纸决策记录",
+    "itinerary": "行程表 — 按天排列的完整行程",
+    "budget": "预算清单 — 分项预算 + 省钱建议",
+    "packing": "打包清单 — 根据目的地定制的行李清单",
+    "action": "行动清单 — 按步骤排列的执行 TODO",
+    "spec": "项目 Spec — 范围定义 + MVP + 技术选型",
+    "features": "功能优先级 — P0/P1/P2 功能拆分表",
+}
+
+
+def _doc_menu_card(category: str = "general") -> dict:
+    """根据话题类别生成文档选择菜单卡片。"""
+    types = DOC_CATEGORY_TYPES.get(category, DOC_CATEGORY_TYPES["general"])
+    lines = ["规划完成！可以帮你生成以下文档：\n"]
+    for i, dt in enumerate(types, 1):
+        desc = _DOC_DESCRIPTIONS.get(dt, DOC_TYPES[dt]["name"])
+        lines.append(f"**{i}. {desc}**")
+    lines.append("")
+    lines.append("回复数字（如 `1`）或名称即可生成。")
+    lines.append("回复 `全部` 生成所有文档。")
+    return make_card("需要生成文档吗？", [
+        {"text": "\n".join(lines)},
+        {"divider": True},
+        {"note": "30 分钟内有效  ·  也可以继续聊别的"},
+    ], color="purple")
+
+
+def _try_create_feishu_doc(title: str, content: str, open_id: Optional[str] = None) -> Optional[str]:
+    """尝试创建飞书云文档，返回文档 URL 或 None。"""
+    owner = open_id or (os.environ.get("FEISHU_DOC_OWNER_OPEN_ID") or "").strip() or None
+    try:
+        ok, result = create_document_with_content(title, content, owner_open_id=owner)
+        if ok:
+            return result
+        _log(f"创建飞书文档失败: {result}")
+    except Exception as e:
+        _log(f"创建飞书文档异常: {e}")
+    return None
+
+
 # ── 运行中追踪 ───────────────────────────────────────────────
 
 _running_sessions: dict[str, str] = {}
 _running_lock = threading.Lock()
+
+
+# ── 文档选择解析与生成 ─────────────────────────────────────
+
+def _resolve_doc_choice(text: str, user_key: str) -> Optional[list[str]]:
+    """检查用户消息是否是文档选择，返回 doc_type 列表或 None。
+
+    支持多种输入格式：
+      "1"       → 单选
+      "123"     → 多选（连续数字）
+      "1,3"     → 多选（逗号分隔）
+      "1 3"     → 多选（空格分隔）
+      "1、3"    → 多选（顿号分隔）
+      "全部"    → 全选
+      "brief"   → 单选（关键词）
+    """
+    with _pending_docs_lock:
+        session = _pending_docs.get(user_key)
+    if not session:
+        return None
+    if time.time() - session["ts"] > _DOC_SESSION_TTL:
+        with _pending_docs_lock:
+            _pending_docs.pop(user_key, None)
+        return None
+
+    menu = session.get("doc_menu") or DOC_MENU
+    t = text.strip().lower()
+
+    # 先尝试精确匹配
+    matched = menu.get(t)
+    if matched is not None:
+        return [matched] if isinstance(matched, str) else list(matched)
+
+    # 尝试解析多数字选择：「123」「1,3」「1 3」「1、3」
+    import re
+    digits = re.findall(r"[1-9]", t)
+    if digits and re.fullmatch(r"[\d,、\s]+", t):
+        seen = set()
+        result = []
+        for d in digits:
+            dt = menu.get(d)
+            if dt and isinstance(dt, str) and dt not in seen:
+                seen.add(dt)
+                result.append(dt)
+        if result:
+            return result
+
+    # 关键词模糊匹配
+    for key, val in menu.items():
+        if key in t:
+            return [val] if isinstance(val, str) else list(val)
+
+    return None
+
+
+def _handle_doc_choice(mid: str, uid: Optional[str], user_key: str, doc_types: list[str]) -> None:
+    """生成用户选择的文档并发送。1 个→独立文档，2+→合并成一个文档。"""
+    with _pending_docs_lock:
+        session = _pending_docs.get(user_key)
+    if not session:
+        reply_message(mid, "文档会话已过期，请重新发起规划。")
+        return
+
+    topic = session["topic"]
+    short_title = session.get("short_title") or topic[:20]
+    outputs = session["outputs"]
+    open_id = session.get("open_id")
+    names = [DOC_TYPES[dt]["name"] for dt in doc_types if dt in DOC_TYPES]
+    reply_card(mid, progress_card("正在生成文档", f"**类型：**{' + '.join(names)}\n\n稍等片刻…"))
+
+    is_single = len(doc_types) == 1
+    generated: list[tuple[str, str]] = []  # (doc_name, content)
+
+    for doc_type in doc_types:
+        cfg = DOC_TYPES.get(doc_type)
+        if not cfg:
+            continue
+        doc_name = cfg["name"]
+        _log(f"生成文档: type={doc_type} topic={topic[:40]}")
+        try:
+            content = generate_doc(doc_type, topic, outputs)
+            generated.append((doc_name, content))
+        except Exception as e:
+            _log(f"文档生成异常: {e}\n{traceback.format_exc()}")
+            err_text = f"生成{doc_name}时出错了，请重试。"
+            if uid:
+                send_message_to_user(uid, err_text)
+            else:
+                reply_message(mid, err_text)
+
+    if not generated:
+        return
+
+    if is_single:
+        doc_name, content = generated[0]
+        display = truncate_for_display(content)
+        doc_card = result_card(f"{doc_name}", body=display, color="purple")
+        if uid:
+            send_card_to_user(uid, doc_card)
+        else:
+            reply_card(mid, doc_card)
+        feishu_url = _try_create_feishu_doc(
+            f"{short_title} — {doc_name}", content, open_id=open_id,
+        )
+        if feishu_url:
+            link_msg = f"飞书文档已创建：{feishu_url}"
+            if uid:
+                send_message_to_user(uid, link_msg)
+            else:
+                reply_message(mid, link_msg)
+            _log(f"飞书文档: {feishu_url}")
+    else:
+        # 合并成一个文档
+        merged_parts = [f"# {short_title} — 规划文档包\n"]
+        for doc_name, content in generated:
+            merged_parts.append(f"## {doc_name}\n\n{content}\n\n---\n")
+        merged_content = "\n".join(merged_parts)
+
+        display = truncate_for_display(merged_content)
+        names_str = " + ".join(n for n, _ in generated)
+        doc_card = result_card(
+            f"文档包（{names_str}）",
+            body=display,
+            color="purple",
+        )
+        if uid:
+            send_card_to_user(uid, doc_card)
+        else:
+            reply_card(mid, doc_card)
+
+        feishu_url = _try_create_feishu_doc(
+            f"{short_title} — 规划文档包", merged_content, open_id=open_id,
+        )
+        if feishu_url:
+            link_msg = f"飞书文档已创建（含 {len(generated)} 份文档）：{feishu_url}"
+            if uid:
+                send_message_to_user(uid, link_msg)
+            else:
+                reply_message(mid, link_msg)
+            _log(f"飞书合并文档: {feishu_url}")
+
+    category = session.get("category", "general")
+    category_types = DOC_CATEGORY_TYPES.get(category, DOC_CATEGORY_TYPES["general"])
+    remaining = [DOC_TYPES[k]["name"] for k in category_types if k not in doc_types and k in DOC_TYPES]
+    if remaining:
+        hint = f"还可以生成：{'、'.join(remaining)}（回复对应数字或名称）"
+        if uid:
+            send_message_to_user(uid, hint)
+        else:
+            reply_message(mid, hint)
 
 
 # ── 消息处理 ─────────────────────────────────────────────────
@@ -231,6 +447,13 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                 reply_card(mid, _help())
                 return
 
+            # ── 检查是否是文档选择 ──
+            user_key = uid or mid
+            doc_choice = _resolve_doc_choice(text, user_key)
+            if doc_choice is not None:
+                _handle_doc_choice(mid, uid, user_key, doc_choice)
+                return
+
             if not _needs_planning(text):
                 _log(f"对话模式: {text[:60]!r}")
                 try:
@@ -245,7 +468,6 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
             if not topic:
                 reply_card(mid, _welcome())
                 return
-            user_key = uid or mid
             with _running_lock:
                 if user_key in _running_sessions:
                     reply_card(mid, progress_card(
@@ -261,16 +483,40 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
             ))
             _log(f"启动规划: topic={topic[:80]!r} mode={mode}")
             try:
-                path = run_planning(topic=topic, context=context, mode=mode)
+                path, planning_outputs = run_planning(topic=topic, context=context, mode=mode)
                 done_card = result_card(
                     "规划完成",
                     fields=[("主题", topic[:100]), ("模式", mode), ("会话文件", f"`{path}`")],
-                    next_actions=["发新主题继续规划", "换个模式试试", "去飞书群看完整过程"],
+                    next_actions=["回复数字生成文档", "发新主题继续规划"],
                 )
                 if uid:
                     send_card_to_user(uid, done_card)
                 else:
                     reply_card(mid, done_card)
+
+                # 生成凝练的文档标题
+                short_title = _generate_short_title(topic)
+
+                # 存储规划结果以便后续生成文档
+                category = detect_doc_category(topic)
+                with _pending_docs_lock:
+                    _pending_docs[user_key] = {
+                        "topic": topic,
+                        "short_title": short_title,
+                        "outputs": planning_outputs,
+                        "path": path,
+                        "open_id": uid,
+                        "category": category,
+                        "doc_menu": build_doc_menu(category),
+                        "ts": time.time(),
+                    }
+                time.sleep(1)
+                menu_card = _doc_menu_card(category)
+                if uid:
+                    send_card_to_user(uid, menu_card)
+                else:
+                    reply_card(mid, menu_card)
+
                 _log(f"规划完成: {path}")
             except Exception as e:
                 _log(f"规划异常: {e}\n{traceback.format_exc()}")

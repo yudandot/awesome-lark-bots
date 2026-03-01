@@ -38,7 +38,7 @@ except ImportError:
 from core.feishu_webhook import send_planner_text as send_text, send_planner_card
 from core.llm import chat_completion
 from core.utils import load_context, run_timestamp, save_session, truncate_for_display
-from planner.prompts import REFINE_BRIEF_SYSTEM, STEP_PROMPTS, MODES, MODE_DESCRIPTIONS, PLANNER_SYSTEM
+from planner.prompts import REFINE_BRIEF_SYSTEM, STEP_PROMPTS, MODES, MODE_DESCRIPTIONS, PLANNER_SYSTEM, DOC_TYPES
 from skills import load_context as load_skill_context
 
 FEISHU_INTERVAL = 1.0
@@ -108,13 +108,26 @@ def detect_mode(text: str) -> str:
     return "完整规划"
 
 
+def generate_doc(doc_type: str, topic: str, planning_outputs: list[tuple[int, str, str]]) -> str:
+    """根据规划输出生成指定类型的可交付文档。"""
+    cfg = DOC_TYPES.get(doc_type)
+    if not cfg:
+        return f"不支持的文档类型: {doc_type}"
+    context_parts = [f"规划主题：{topic}"]
+    for num, name, out in planning_outputs:
+        context_parts.append(f"--- 第 {num} 步 {name} ---\n{out}")
+    user_msg = "\n\n".join(context_parts)
+    user_msg += f"\n\n请根据以上规划分析，生成{cfg['name']}。"
+    return chat_completion(provider=PROVIDER, system=cfg["system"], user=user_msg).strip()
+
+
 def run_planning(
     topic: str,
     context: str = "",
     mode: str = "完整规划",
     no_refine: bool = False,
-) -> str:
-    """执行完整的理性规划流程，返回 session 文件路径。"""
+) -> tuple[str, list[tuple[int, str, str]]]:
+    """执行完整的理性规划流程，返回 (session 文件路径, 规划步骤输出列表)。"""
     ts = run_timestamp()
     steps = MODES.get(mode, MODES["完整规划"])
     mode_desc = MODE_DESCRIPTIONS.get(mode, mode)
@@ -191,7 +204,7 @@ def run_planning(
     print(f"[保存] 规划已写入 {path}", flush=True)
     send_planner_card("规划完成", f"完整内容已保存至 `{path}`", color="green")
     print("\n========== 规划结束 ==========", flush=True)
-    return str(path)
+    return str(path), previous_outputs
 
 
 def main():
@@ -201,7 +214,7 @@ def main():
     parser.add_argument("--mode", default="完整规划", choices=list(MODES.keys()), help="规划模式")
     parser.add_argument("--no-refine", action="store_true", help="跳过需求结构化")
     args = parser.parse_args()
-    run_planning(
+    path, _ = run_planning(
         topic=args.topic.strip(),
         context=load_context(args.context or ""),
         mode=args.mode,

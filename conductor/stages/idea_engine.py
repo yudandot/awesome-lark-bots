@@ -9,6 +9,7 @@ Stage 2: 构思 — 脑暴或快速创意，产出内容方向。
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -146,11 +147,13 @@ def generate_ideas_deep(
     full_context = (context + "\n\n" + "\n".join(extra)).strip() if extra else context
 
     log.info("深度模式：启动脑暴...")
+    conductor_webhook = (os.environ.get("CONDUCTOR_BRAINSTORM_WEBHOOK") or "").strip() or None
     bs_path = run_brainstorm(
         topic=topic,
         context=full_context,
         brand=brand,
         deliverables="自媒体内容方案（标题、切入角度、文案框架、视觉方向）",
+        webhook=conductor_webhook,
     )
 
     bs_content = Path(bs_path).read_text(encoding="utf-8") if Path(bs_path).exists() else ""

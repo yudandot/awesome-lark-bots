@@ -48,7 +48,7 @@ from core.feishu_client import (
     create_calendar_event,
     get_user_access_token,
 )
-from core.cards import welcome_card, action_card, help_card, error_card
+from core.cards import make_card, welcome_card, action_card, help_card, error_card, progress_card
 from core.llm import chat
 from memo.intent import parse_intent
 from memo.store import (
@@ -143,6 +143,75 @@ def _memo_category_tag(memo: dict) -> str:
         return ""
     name = MEMO_CATEGORY_DISPLAY.get(key, "")
     return f"[{name}] " if name else ""
+
+
+# ── 研究报告发送 ─────────────────────────────────────────────
+
+MAX_CARD_SECTION_LEN = 3500
+MAX_CARD_TOTAL_LEN = 8000
+
+
+def _split_report(report: str, max_len: int = MAX_CARD_TOTAL_LEN) -> list[str]:
+    """按 markdown 二级标题拆分研究报告，每段不超过 max_len。"""
+    import re as _re
+    parts = _re.split(r'\n(?=### \d)', report)
+    if not parts:
+        return [report[:max_len]]
+
+    chunks: list[str] = []
+    current = ""
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        if len(current) + len(part) + 2 > max_len and current:
+            chunks.append(current.strip())
+            current = part
+        else:
+            current = current + "\n\n" + part if current else part
+    if current.strip():
+        chunks.append(current.strip())
+
+    result = []
+    for chunk in chunks:
+        if len(chunk) <= max_len:
+            result.append(chunk)
+        else:
+            while chunk:
+                result.append(chunk[:max_len])
+                chunk = chunk[max_len:]
+    return result
+
+
+def _send_research_report(
+    message_id: str,
+    open_id: Optional[str],
+    topic: str,
+    report: str,
+) -> None:
+    """把研究报告拆分成卡片发送。"""
+    chunks = _split_report(report)
+    total = len(chunks)
+
+    for i, chunk in enumerate(chunks, 1):
+        title = f"🔬 研究报告：{topic[:30]}"
+        if total > 1:
+            title += f"  [{i}/{total}]"
+
+        card = make_card(title, [{"text": chunk[:MAX_CARD_TOTAL_LEN]}], color="indigo")
+
+        if i == 1:
+            if open_id:
+                send_card_to_user(open_id, card)
+            else:
+                reply_card(message_id, card)
+        elif open_id:
+            send_card_to_user(open_id, card)
+
+        if i < total:
+            time.sleep(1.0)
+
+    _log(f"研究报告已发送: {topic[:30]} ({total} 张卡片, {len(report)} 字)")
 
 
 # ── 消息处理 ─────────────────────────────────────────────────
@@ -531,6 +600,35 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                 ))
                 return
 
+            # ── 联网研究 ──
+            if action == "research":
+                topic = (params.get("topic") or text).strip()
+                if not topic:
+                    reply_message(mid, "请说要研究什么，例如：研究 Character.ai 增长机制")
+                    return
+                reply_card(mid, progress_card(
+                    "正在研究",
+                    f"**课题：**{topic[:100]}\n\n"
+                    "正在多来源搜索、交叉验证、分析机制……\n"
+                    "预计 1–3 分钟，完成后发送完整报告。",
+                    color="indigo",
+                ))
+                try:
+                    from research.researcher import Researcher
+                    researcher = Researcher()
+                    report = researcher.research(topic, verbose=False)
+                except Exception as e:
+                    _log(f"研究失败: {e}\n{traceback.format_exc()}")
+                    if user_open_id:
+                        send_card_to_user(user_open_id, error_card(
+                            "研究失败", f"原因：{str(e)[:200]}",
+                            suggestions=["换个说法重试", "发「帮助」查看指令"],
+                        ))
+                    return
+
+                _send_research_report(mid, user_open_id, topic, report)
+                return
+
             # ── 查日程 ──
             if action == "get_schedule":
                 date_param = (params.get("date") or "today").strip()
@@ -623,14 +721,14 @@ def _handle_message_read(_data) -> None:
 def _welcome() -> dict:
     return welcome_card(
         "小助手",
-        "我能帮你 **记备忘、管日历、追踪工作线程、推简报**，也可以随便聊聊。",
+        "我能帮你 **记备忘、管日历、追踪工作线程、推简报**，还能 **联网研究** 任何话题。",
         examples=[
             "备忘 完成 deck #creator",
             "线程",
+            "研究 Character.ai 增长机制",
             "今天有什么安排？",
-            "周报",
         ],
-        hints=["发送「帮助」查看所有指令", "备忘加 #标签 自动归入工作线程"],
+        hints=["发送「帮助」查看所有指令", "「研究 话题」启动 Fact-Check 深度分析"],
     )
 
 
@@ -651,6 +749,12 @@ def _help() -> dict:
          "> **完成 3** — 标记第3条完成 ✅\n"
          "> **完成 买牛奶** — 按内容完成\n"
          "> 清除备忘 3 — 彻底删除第3条"),
+        ("联网研究（Fact-Check）",
+         "> **研究 Character.ai 增长机制**\n"
+         "> **调研 2026 AI agent 框架对比**\n"
+         "> **fact check Threads 增长真的是 organic 吗**\n\n"
+         "自动多来源搜索、交叉验证、分析机制，\n"
+         "输出含置信度标记的结构化研究报告"),
         ("日程管理",
          "> 明天下午3点开会 → 自动加入飞书日历\n"
          "> 今天 / 明天 → 查看日程安排"),

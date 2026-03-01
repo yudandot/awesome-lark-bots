@@ -306,6 +306,73 @@ def list_calendar_events(
 
 # ── 文档 ─────────────────────────────────────────────────────
 
+_BLOCK_BATCH_SIZE = 50
+
+
+def _parse_inline(text: str) -> list:
+    """解析行内 Markdown（**加粗**）为飞书 text_run 元素。"""
+    elements = []
+    parts = re.split(r"(\*\*.*?\*\*)", text)
+    for part in parts:
+        if not part:
+            continue
+        if part.startswith("**") and part.endswith("**") and len(part) > 4:
+            elements.append({
+                "text_run": {
+                    "content": part[2:-2],
+                    "text_element_style": {"bold": True},
+                }
+            })
+        else:
+            elements.append({"text_run": {"content": part}})
+    return elements or [{"text_run": {"content": text or ""}}]
+
+
+def _markdown_to_blocks(content: str) -> list:
+    """将 Markdown 文本转换为飞书 DocX block 数组。
+
+    支持：# 标题 / **加粗** / - 列表 / 1. 有序列表 / > 引用 / - [ ] 待办
+    表格行保留为文本段落，分割线(---)跳过。
+    """
+    blocks: list[dict] = []
+    for line in content.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped in ("---", "***", "___"):
+            continue
+        if re.match(r"^\|[\s\-:|]+\|$", stripped):
+            continue
+
+        if stripped.startswith("### "):
+            blocks.append({"block_type": 5, "heading3": {"elements": _parse_inline(stripped[4:])}})
+        elif stripped.startswith("## "):
+            blocks.append({"block_type": 4, "heading2": {"elements": _parse_inline(stripped[3:])}})
+        elif stripped.startswith("# "):
+            blocks.append({"block_type": 3, "heading1": {"elements": _parse_inline(stripped[2:])}})
+        elif stripped.startswith("- [ ] "):
+            blocks.append({"block_type": 2, "text": {"elements": _parse_inline("☐ " + stripped[6:])}})
+        elif stripped.startswith(("- [x] ", "- [X] ")):
+            blocks.append({"block_type": 2, "text": {"elements": _parse_inline("☑ " + stripped[6:])}})
+        elif stripped.startswith("- ") or stripped.startswith("* "):
+            blocks.append({"block_type": 12, "bullet": {"elements": _parse_inline(stripped[2:])}})
+        elif re.match(r"^\d+\.\s", stripped):
+            text = re.sub(r"^\d+\.\s", "", stripped)
+            blocks.append({"block_type": 13, "ordered": {"elements": _parse_inline(text)}})
+        elif stripped.startswith("> "):
+            blocks.append({"block_type": 2, "text": {"elements": _parse_inline("「" + stripped[2:] + "」")}})
+        else:
+            blocks.append({"block_type": 2, "text": {"elements": _parse_inline(stripped)}})
+
+    return blocks or [{"block_type": 2, "text": {"elements": [{"text_run": {"content": ""}}]}}]
+
+
+def _plain_text_blocks(content: str) -> list:
+    """降级方案：全部转为纯文本段落。"""
+    lines = [l.strip() for l in content.split("\n") if l.strip()] or [""]
+    return [{"block_type": 2, "text": {"elements": [{"text_run": {"content": l}}]}} for l in lines]
+
+
 def create_document_with_content(
     title: str,
     content: str,
@@ -323,7 +390,6 @@ def create_document_with_content(
     if not doc_id or revision_id is None:
         return False, "创建文档失败"
 
-    # 获取根块
     blocks_url = f"{FEISHU_API_BASE}/docx/v1/documents/{doc_id}/blocks"
     resp2 = requests.get(blocks_url, params={"document_revision_id": -1, "page_size": 20}, headers=_headers(token), timeout=10)
     d2 = resp2.json()
@@ -332,19 +398,45 @@ def create_document_with_content(
     if not root_block:
         return False, "无法获取文档结构"
 
-    lines = [line.strip() for line in content.split("\n") if line.strip()] or [""]
-    children = [{"block_type": 2, "text": {"elements": [{"text_run": {"content": line}}]}} for line in lines]
+    try:
+        children = _markdown_to_blocks(content)
+    except Exception:
+        children = _plain_text_blocks(content)
+
     write_url = f"{FEISHU_API_BASE}/docx/v1/documents/{doc_id}/blocks/{root_block}/children"
-    resp3 = requests.post(
-        write_url,
-        params={"document_revision_id": revision_id},
-        json={"children": children, "index": 0},
-        headers=_headers(token),
-        timeout=10,
-    )
-    d3 = resp3.json()
-    if d3.get("code") != 0:
-        return False, d3.get("msg", "写入内容失败") or str(d3)
+    write_ok = False
+    for start in range(0, len(children), _BLOCK_BATCH_SIZE):
+        batch = children[start:start + _BLOCK_BATCH_SIZE]
+        resp3 = requests.post(
+            write_url,
+            params={"document_revision_id": -1},
+            json={"children": batch, "index": start},
+            headers=_headers(token),
+            timeout=30,
+        )
+        d3 = resp3.json()
+        if d3.get("code") != 0:
+            if start == 0:
+                # 首批失败：降级为纯文本重试
+                _warn(f"格式化写入失败 code={d3.get('code')}，降级纯文本重试")
+                children = _plain_text_blocks(content)
+                for fallback_start in range(0, len(children), _BLOCK_BATCH_SIZE):
+                    fb = children[fallback_start:fallback_start + _BLOCK_BATCH_SIZE]
+                    requests.post(
+                        write_url,
+                        params={"document_revision_id": -1},
+                        json={"children": fb, "index": fallback_start},
+                        headers=_headers(token),
+                        timeout=30,
+                    )
+                write_ok = True
+                break
+            _warn(f"第 {start} 批写入失败: {d3.get('msg')}")
+            break
+        write_ok = True
+
+    if not write_ok:
+        return False, "写入内容失败"
 
     if owner_open_id:
         perm_url = f"{FEISHU_API_BASE}/drive/v1/permissions/{doc_id}/members"
@@ -356,6 +448,6 @@ def create_document_with_content(
 
     base = (os.environ.get("FEISHU_DOC_BASE_URL") or "").strip().rstrip("/")
     if not base:
-        base = "open.feishu.cn"
+        base = "feishu.cn"
     doc_url = f"https://{base}/docx/{doc_id}" if not base.startswith("http") else f"{base}/docx/{doc_id}"
     return True, doc_url
