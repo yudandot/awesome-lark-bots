@@ -108,6 +108,14 @@ def detect_mode(text: str) -> str:
     return "完整规划"
 
 
+_DOC_QUALITY_SUFFIX = """
+
+请根据以上规划分析生成文档。质量要求：
+- 只写这个具体项目的内容，不要输出套在任何项目上都成立的通用句子
+- 每句话删掉后如果不影响理解，说明这句话是废话，不要写
+- 数字、时间、地点、人要具体，不要用"相关""适当""一定程度"等模糊词"""
+
+
 def generate_doc(doc_type: str, topic: str, planning_outputs: list[tuple[int, str, str]]) -> str:
     """根据规划输出生成指定类型的可交付文档。"""
     cfg = DOC_TYPES.get(doc_type)
@@ -117,7 +125,7 @@ def generate_doc(doc_type: str, topic: str, planning_outputs: list[tuple[int, st
     for num, name, out in planning_outputs:
         context_parts.append(f"--- 第 {num} 步 {name} ---\n{out}")
     user_msg = "\n\n".join(context_parts)
-    user_msg += f"\n\n请根据以上规划分析，生成{cfg['name']}。"
+    user_msg += _DOC_QUALITY_SUFFIX
     return chat_completion(provider=PROVIDER, system=cfg["system"], user=user_msg).strip()
 
 
