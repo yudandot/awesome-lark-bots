@@ -116,17 +116,28 @@ _DOC_QUALITY_SUFFIX = """
 - 数字、时间、地点、人要具体，不要用"相关""适当""一定程度"等模糊词"""
 
 
-def generate_doc(doc_type: str, topic: str, planning_outputs: list[tuple[int, str, str]]) -> str:
-    """根据规划输出生成指定类型的可交付文档。"""
+def generate_doc(doc_type: str, topic: str, planning_outputs: list[tuple[int, str, str]]) -> tuple[str, str]:
+    """根据规划输出生成指定类型的可交付文档。
+
+    Returns: (content, format) — format 为 "doc" 或 "sheet"。
+    """
     cfg = DOC_TYPES.get(doc_type)
     if not cfg:
-        return f"不支持的文档类型: {doc_type}"
+        return f"不支持的文档类型: {doc_type}", "doc"
+    fmt = cfg.get("format", "doc")
+    system = cfg["system"]
+    try:
+        from core.skill_router import enrich_prompt
+        system = enrich_prompt(system, user_text=topic, bot_type="planner")
+    except Exception:
+        pass
     context_parts = [f"规划主题：{topic}"]
     for num, name, out in planning_outputs:
         context_parts.append(f"--- 第 {num} 步 {name} ---\n{out}")
     user_msg = "\n\n".join(context_parts)
     user_msg += _DOC_QUALITY_SUFFIX
-    return chat_completion(provider=PROVIDER, system=cfg["system"], user=user_msg).strip()
+    content = chat_completion(provider=PROVIDER, system=system, user=user_msg).strip()
+    return content, fmt
 
 
 def run_planning(

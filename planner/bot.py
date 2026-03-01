@@ -32,7 +32,10 @@ except ImportError:
 import lark_oapi as lark
 from lark_oapi import EventDispatcherHandler, LogLevel
 
-from core.feishu_client import reply_message, reply_card, send_message_to_user, send_card_to_user, create_document_with_content
+from core.feishu_client import (
+    reply_message, reply_card, send_message_to_user, send_card_to_user,
+    create_document_with_content, create_spreadsheet_from_markdown,
+)
 from core.cards import welcome_card, progress_card, result_card, error_card, help_card, make_card
 from core.llm import chat_completion
 from core.utils import truncate_for_display
@@ -259,6 +262,19 @@ def _try_create_feishu_doc(title: str, content: str, open_id: Optional[str] = No
     return None
 
 
+def _try_create_feishu_sheet(title: str, content: str, open_id: Optional[str] = None) -> Optional[str]:
+    """尝试从 Markdown 表格内容创建飞书电子表格，返回 URL 或 None。"""
+    owner = open_id or (os.environ.get("FEISHU_DOC_OWNER_OPEN_ID") or "").strip() or None
+    try:
+        ok, result = create_spreadsheet_from_markdown(title, content, owner_open_id=owner)
+        if ok:
+            return result
+        _log(f"创建飞书表格失败: {result}")
+    except Exception as e:
+        _log(f"创建飞书表格异常: {e}")
+    return None
+
+
 # ── 运行中追踪 ───────────────────────────────────────────────
 
 _running_sessions: dict[str, str] = {}
@@ -318,8 +334,27 @@ def _resolve_doc_choice(text: str, user_key: str) -> Optional[list[str]]:
     return None
 
 
+def _send_card(uid: Optional[str], mid: str, card: dict) -> None:
+    if uid:
+        send_card_to_user(uid, card)
+    else:
+        reply_card(mid, card)
+
+
+def _send_msg(uid: Optional[str], mid: str, text: str) -> None:
+    if uid:
+        send_message_to_user(uid, text)
+    else:
+        reply_message(mid, text)
+
+
 def _handle_doc_choice(mid: str, uid: Optional[str], user_key: str, doc_types: list[str]) -> None:
-    """生成用户选择的文档并发送。1 个→独立文档，2+→合并成一个文档。"""
+    """生成用户选择的文档并发送。
+
+    doc 格式 → 飞书云文档（多个合并为一份），
+    sheet 格式 → 飞书电子表格（各自独立），
+    sheet 创建失败自动降级为文档。
+    """
     with _pending_docs_lock:
         session = _pending_docs.get(user_key)
     if not session:
@@ -333,8 +368,8 @@ def _handle_doc_choice(mid: str, uid: Optional[str], user_key: str, doc_types: l
     names = [DOC_TYPES[dt]["name"] for dt in doc_types if dt in DOC_TYPES]
     reply_card(mid, progress_card("正在生成文档", f"**类型：**{' + '.join(names)}\n\n稍等片刻…"))
 
-    is_single = len(doc_types) == 1
-    generated: list[tuple[str, str]] = []  # (doc_name, content)
+    doc_items: list[tuple[str, str, str]] = []    # (doc_type, doc_name, content)
+    sheet_items: list[tuple[str, str, str]] = []  # (doc_type, doc_name, content)
 
     for doc_type in doc_types:
         cfg = DOC_TYPES.get(doc_type)
@@ -343,78 +378,71 @@ def _handle_doc_choice(mid: str, uid: Optional[str], user_key: str, doc_types: l
         doc_name = cfg["name"]
         _log(f"生成文档: type={doc_type} topic={topic[:40]}")
         try:
-            content = generate_doc(doc_type, topic, outputs)
-            generated.append((doc_name, content))
+            content, fmt = generate_doc(doc_type, topic, outputs)
+            if fmt == "sheet":
+                sheet_items.append((doc_type, doc_name, content))
+            else:
+                doc_items.append((doc_type, doc_name, content))
         except Exception as e:
             _log(f"文档生成异常: {e}\n{traceback.format_exc()}")
-            err_text = f"生成{doc_name}时出错了，请重试。"
-            if uid:
-                send_message_to_user(uid, err_text)
-            else:
-                reply_message(mid, err_text)
+            _send_msg(uid, mid, f"生成{doc_name}时出错了，请重试。")
 
-    if not generated:
+    if not doc_items and not sheet_items:
         return
 
-    if is_single:
-        doc_name, content = generated[0]
-        display = truncate_for_display(content)
-        doc_card = result_card(f"{doc_name}", body=display, color="purple")
-        if uid:
-            send_card_to_user(uid, doc_card)
-        else:
-            reply_card(mid, doc_card)
-        feishu_url = _try_create_feishu_doc(
-            f"{short_title} — {doc_name}", content, open_id=open_id,
-        )
-        if feishu_url:
-            link_msg = f"飞书文档已创建：{feishu_url}"
-            if uid:
-                send_message_to_user(uid, link_msg)
-            else:
-                reply_message(mid, link_msg)
-            _log(f"飞书文档: {feishu_url}")
-    else:
-        # 合并成一个文档（带目录）
-        toc_items = [f"{i}. {name}" for i, (name, _) in enumerate(generated, 1)]
+    all_links: list[tuple[str, str, str]] = []  # (name, url, type_label)
+
+    # ── doc 格式：单个直接创建，多个合并 ──
+    if len(doc_items) == 1:
+        _, doc_name, content = doc_items[0]
+        _send_card(uid, mid, result_card(doc_name, body=truncate_for_display(content), color="purple"))
+        url = _try_create_feishu_doc(f"{short_title} — {doc_name}", content, open_id=open_id)
+        if url:
+            all_links.append((doc_name, url, "文档"))
+            _log(f"飞书文档: {url}")
+    elif len(doc_items) > 1:
+        toc_items = [f"{i}. {name}" for i, (_, name, _) in enumerate(doc_items, 1)]
         toc = "**目录：**" + " ｜ ".join(toc_items)
         merged_parts = [f"# {short_title}\n\n{toc}\n"]
-        for doc_name, content in generated:
+        for _, doc_name, content in doc_items:
             merged_parts.append(f"\n---\n\n## {doc_name}\n\n{content}\n")
         merged_content = "\n".join(merged_parts)
+        names_str = " + ".join(name for _, name, _ in doc_items)
+        _send_card(uid, mid, result_card(f"文档包（{names_str}）", body=truncate_for_display(merged_content), color="purple"))
+        url = _try_create_feishu_doc(f"{short_title} — 规划文档包", merged_content, open_id=open_id)
+        if url:
+            all_links.append(("文档包", url, "文档"))
+            _log(f"飞书合并文档: {url}")
 
-        display = truncate_for_display(merged_content)
-        names_str = " + ".join(n for n, _ in generated)
-        doc_card = result_card(
-            f"文档包（{names_str}）",
-            body=display,
-            color="purple",
-        )
-        if uid:
-            send_card_to_user(uid, doc_card)
+    # ── sheet 格式：各自独立创建，失败降级为文档 ──
+    for _, doc_name, content in sheet_items:
+        _send_card(uid, mid, result_card(doc_name, body=truncate_for_display(content), color="purple"))
+        url = _try_create_feishu_sheet(f"{short_title} — {doc_name}", content, open_id=open_id)
+        if url:
+            all_links.append((doc_name, url, "表格"))
+            _log(f"飞书表格: {url}")
         else:
-            reply_card(mid, doc_card)
+            _log(f"表格创建失败，降级为文档: {doc_name}")
+            url = _try_create_feishu_doc(f"{short_title} — {doc_name}", content, open_id=open_id)
+            if url:
+                all_links.append((doc_name, url, "文档"))
+                _log(f"飞书文档(降级): {url}")
 
-        feishu_url = _try_create_feishu_doc(
-            f"{short_title} — 规划文档包", merged_content, open_id=open_id,
-        )
-        if feishu_url:
-            link_msg = f"飞书文档已创建（含 {len(generated)} 份文档）：{feishu_url}"
-            if uid:
-                send_message_to_user(uid, link_msg)
-            else:
-                reply_message(mid, link_msg)
-            _log(f"飞书合并文档: {feishu_url}")
+    # ── 发送链接 ──
+    if all_links:
+        if len(all_links) == 1:
+            name, url, type_label = all_links[0]
+            _send_msg(uid, mid, f"飞书{type_label}已创建：{url}")
+        else:
+            parts = [f"• {name}（{tl}）：{url}" for name, url, tl in all_links]
+            _send_msg(uid, mid, "飞书文件已创建：\n" + "\n".join(parts))
 
+    # ── 剩余文档提示 ──
     category = session.get("category", "general")
     category_types = DOC_CATEGORY_TYPES.get(category, DOC_CATEGORY_TYPES["general"])
     remaining = [DOC_TYPES[k]["name"] for k in category_types if k not in doc_types and k in DOC_TYPES]
     if remaining:
-        hint = f"还可以生成：{'、'.join(remaining)}（回复对应数字或名称）"
-        if uid:
-            send_message_to_user(uid, hint)
-        else:
-            reply_message(mid, hint)
+        _send_msg(uid, mid, f"还可以生成：{'、'.join(remaining)}（回复对应数字或名称）")
 
 
 # ── 消息处理 ─────────────────────────────────────────────────

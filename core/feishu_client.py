@@ -483,3 +483,154 @@ def create_document_with_content(
         base = "feishu.cn"
     doc_url = f"https://{base}/docx/{doc_id}" if not base.startswith("http") else f"{base}/docx/{doc_id}"
     return True, doc_url
+
+
+# ── 电子表格 ─────────────────────────────────────────────────
+
+def _parse_markdown_table(content: str) -> tuple[list[str], list[list[str]], str]:
+    """从 Markdown 内容中提取表格数据。
+
+    Returns: (headers, rows, extra_text)
+      - headers: 表头列名
+      - rows: 数据行
+      - extra_text: 表格外的文本（如时间线的"瓶颈"注释）
+    """
+    lines = content.split("\n")
+    table_lines: list[str] = []
+    extra_lines: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("|") and stripped.count("|") >= 3:
+            table_lines.append(stripped)
+        elif stripped and stripped not in ("---", "***", "___"):
+            extra_lines.append(stripped)
+
+    if not table_lines:
+        return [], [], content.strip()
+
+    def _split_row(line: str) -> list[str]:
+        cells = line.strip().strip("|").split("|")
+        return [c.strip() for c in cells]
+
+    def _is_separator(line: str) -> bool:
+        cells = line.strip().strip("|").split("|")
+        return all(re.fullmatch(r"[\s\-:]+", c) for c in cells if c.strip())
+
+    headers = _split_row(table_lines[0])
+    rows: list[list[str]] = []
+    for line in table_lines[1:]:
+        if _is_separator(line):
+            continue
+        row = _split_row(line)
+        if any(c for c in row):
+            rows.append(row)
+
+    extra_text = "\n".join(extra_lines).strip()
+    return headers, rows, extra_text
+
+
+def create_spreadsheet_with_data(
+    title: str,
+    headers: list[str],
+    rows: list[list[str]],
+    extra_text: str = "",
+    owner_open_id: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """创建飞书电子表格并写入结构化数据。
+
+    需要飞书应用开通 sheets:spreadsheet 权限。
+    """
+    token = get_user_access_token("doc_create") or get_tenant_access_token()
+
+    url = f"{FEISHU_API_BASE}/sheets/v3/spreadsheets"
+    resp = requests.post(url, json={"title": title}, headers=_headers(token), timeout=15)
+    data = resp.json()
+    if data.get("code") != 0:
+        return False, data.get("msg", "创建表格失败") or str(data)
+
+    ss = (data.get("data") or {}).get("spreadsheet") or {}
+    ss_token = ss.get("spreadsheet_token")
+    ss_url = ss.get("url") or ""
+    if not ss_token:
+        return False, "创建表格失败：未返回 token"
+
+    # 获取默认工作表 ID
+    meta_url = f"{FEISHU_API_BASE}/sheets/v2/spreadsheets/{ss_token}/metainfo"
+    resp2 = requests.get(meta_url, headers=_headers(token), timeout=10)
+    d2 = resp2.json()
+    sheets_meta = (d2.get("data") or {}).get("sheets") or []
+    sheet_id = sheets_meta[0].get("sheetId") if sheets_meta else None
+    if not sheet_id:
+        query_url = f"{FEISHU_API_BASE}/sheets/v3/spreadsheets/{ss_token}/sheets/query"
+        resp2b = requests.get(query_url, headers=_headers(token), timeout=10)
+        d2b = resp2b.json()
+        sheets_v3 = (d2b.get("data") or {}).get("sheets") or []
+        sheet_id = sheets_v3[0].get("sheet_id") if sheets_v3 else None
+    if not sheet_id:
+        return False, "无法获取工作表 ID"
+
+    all_data = [headers] + rows
+    if extra_text:
+        all_data.append([""] * len(headers))
+        all_data.append([extra_text] + [""] * (len(headers) - 1))
+
+    num_cols = max(len(r) for r in all_data) if all_data else 1
+    padded = [r + [""] * (num_cols - len(r)) for r in all_data]
+
+    def _col_letter(n: int) -> str:
+        result = ""
+        while n > 0:
+            n, remainder = divmod(n - 1, 26)
+            result = chr(65 + remainder) + result
+        return result
+
+    end_col = _col_letter(num_cols)
+    num_rows = len(padded)
+    range_str = f"{sheet_id}!A1:{end_col}{num_rows}"
+
+    write_url = f"{FEISHU_API_BASE}/sheets/v2/spreadsheets/{ss_token}/values"
+    resp3 = requests.put(
+        write_url,
+        json={"valueRange": {"range": range_str, "values": padded}},
+        headers=_headers(token),
+        timeout=30,
+    )
+    d3 = resp3.json()
+    if d3.get("code") != 0:
+        _warn(f"写入表格数据失败: code={d3.get('code')} msg={d3.get('msg')}")
+
+    if owner_open_id:
+        perm_url = f"{FEISHU_API_BASE}/drive/v1/permissions/{ss_token}/members"
+        try:
+            requests.post(
+                perm_url, params={"type": "sheet"},
+                json={"member_type": "openid", "member_id": owner_open_id, "perm": "full_access"},
+                headers=_headers(token), timeout=10,
+            )
+        except Exception:
+            pass
+
+    if not ss_url:
+        base = (os.environ.get("FEISHU_DOC_BASE_URL") or "").strip().rstrip("/")
+        if not base:
+            base = "feishu.cn"
+        ss_url = f"https://{base}/sheets/{ss_token}" if not base.startswith("http") else f"{base}/sheets/{ss_token}"
+
+    return True, ss_url
+
+
+def create_spreadsheet_from_markdown(
+    title: str,
+    content: str,
+    owner_open_id: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """从 Markdown 表格内容创建飞书电子表格。
+
+    解析内容中的 Markdown 表格，写入飞书 Sheet。
+    如无有效表格数据，返回 (False, reason)。
+    """
+    headers, rows, extra = _parse_markdown_table(content)
+    if not headers or not rows:
+        return False, "未找到有效的表格数据"
+    return create_spreadsheet_with_data(title, headers, rows, extra, owner_open_id)

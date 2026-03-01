@@ -508,19 +508,19 @@ DOC_FEATURE_PRIORITY_SYSTEM = """你是一个产品优先级拆分专家。根�
 
 DOC_TYPES = {
     # 通用 / 商业
-    "brief": {"name": "执行 Brief", "system": DOC_BRIEF_SYSTEM},
-    "calendar": {"name": "内容日历", "system": DOC_CALENDAR_SYSTEM},
-    "timeline": {"name": "里程碑时间线", "system": DOC_TIMELINE_SYSTEM},
-    "decision": {"name": "决策备忘", "system": DOC_DECISION_SYSTEM},
+    "brief": {"name": "执行 Brief", "system": DOC_BRIEF_SYSTEM, "format": "doc"},
+    "calendar": {"name": "内容日历", "system": DOC_CALENDAR_SYSTEM, "format": "sheet"},
+    "timeline": {"name": "里程碑时间线", "system": DOC_TIMELINE_SYSTEM, "format": "sheet"},
+    "decision": {"name": "决策备忘", "system": DOC_DECISION_SYSTEM, "format": "doc"},
     # 旅行
-    "itinerary": {"name": "行程表", "system": DOC_ITINERARY_SYSTEM},
-    "budget": {"name": "预算清单", "system": DOC_BUDGET_SYSTEM},
-    "packing": {"name": "打包清单", "system": DOC_PACKING_SYSTEM},
+    "itinerary": {"name": "行程表", "system": DOC_ITINERARY_SYSTEM, "format": "sheet"},
+    "budget": {"name": "预算清单", "system": DOC_BUDGET_SYSTEM, "format": "sheet"},
+    "packing": {"name": "打包清单", "system": DOC_PACKING_SYSTEM, "format": "doc"},
     # 通用生活
-    "action": {"name": "行动清单", "system": DOC_ACTION_SYSTEM},
+    "action": {"name": "行动清单", "system": DOC_ACTION_SYSTEM, "format": "sheet"},
     # 创意项目
-    "spec": {"name": "项目 Spec", "system": DOC_SPEC_SYSTEM},
-    "features": {"name": "功能优先级", "system": DOC_FEATURE_PRIORITY_SYSTEM},
+    "spec": {"name": "项目 Spec", "system": DOC_SPEC_SYSTEM, "format": "doc"},
+    "features": {"name": "功能优先级", "system": DOC_FEATURE_PRIORITY_SYSTEM, "format": "sheet"},
 }
 
 _TRAVEL_SIGNALS = (
