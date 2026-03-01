@@ -18,7 +18,7 @@ from sentiment.core.stats import stats_text
 
 def _build_kimi_prompt(posts: list[dict], stats: dict, profile: dict,
                        web_supplement: str = "") -> str:
-    subject = profile.get("subject", "《光·遇》")
+    subject = profile.get("subject", "品牌")
     days = profile.get("days", 7)
     period_text = "过去7天" if days == 7 else f"过去{days}天"
 
@@ -121,7 +121,7 @@ def analyze_with_ai(posts: list[dict], stats: dict, profile: dict,
     prompt = _build_kimi_prompt(posts, stats, profile, web_supplement)
     log.info("Prompt length: %d chars (~%d tokens)", len(prompt), len(prompt) // 2)
 
-    subject = profile.get("subject", "《光·遇》")
+    subject = profile.get("subject", "品牌")
     system_content = (
         f"你是资深游戏舆情与社区生态分析师，为{subject}输出舆情与社区生态观察报告，"
         "支持社区运营、市场策略、创作者生态与风险判断。不编造数据，风险判断克制。"
@@ -188,7 +188,7 @@ def kimi_web_search_supplement(profile: dict) -> str:
     start_dt = (now - timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0)
     start_s = start_dt.strftime("%Y-%m-%d")
     end_s = end_dt.strftime("%Y-%m-%d")
-    subject = profile.get("subject", "《光·遇》")
+    subject = profile.get("subject", "品牌")
 
     prompt = f"""请使用联网搜索，检索并整理【{start_s} 至 {end_s}】期间{subject}在中国大陆社媒的舆情与讨论。
 

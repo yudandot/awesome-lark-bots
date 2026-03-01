@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-指挥官飞书机器人 — 通过飞书消息驱动内容全流程。
+自媒体助手飞书机器人 — 通过飞书消息驱动内容全流程。
 
 使用方式（在飞书上给机器人发消息）：
 
@@ -653,7 +653,7 @@ def _format_result_card(run: PipelineRun) -> dict:
 # ── 欢迎/帮助卡片 ─────────────────────────────────────────────
 
 def _welcome_card() -> dict:
-    return _card("Hi! 我是自媒体指挥官", [
+    return _card("Hi! 我是自媒体助手", [
         {"text": (
             "发一个**选题**，我会先让你选是否走脑暴，再执行：\n"
             "**扫描热点** → **创意/脑暴** → **生成文案+视觉** → **存到内容仓库**"
@@ -663,8 +663,8 @@ def _welcome_card() -> dict:
             "> 春天穿搭分享\n"
             "> 机器人会问：脑暴 or 快速？回复「脑暴」或「快速」即可\n\n"
             "**一步到位：**\n"
-            "> 脑暴：光遇 × 茶馆联动  → 直接走脑暴\n"
-            "> 快速：光遇归来季  → 直接快速执行"
+            "> 脑暴：咖啡品牌 × 音乐节联动  → 直接走脑暴\n"
+            "> 快速：春天穿搭分享  → 直接快速执行"
         )},
         {"divider": True},
         {"text": (
@@ -714,7 +714,7 @@ RECONNECT_MULTIPLIER = 2
 
 
 def _handle_bot_entered(data) -> None:
-    _log("用户打开了与指挥官的单聊")
+    _log("用户打开了与自媒体助手的单聊")
     try:
         open_id = None
         if hasattr(data, "event") and data.event:
@@ -753,15 +753,15 @@ def _run_client(app_id: str, app_secret: str) -> None:
 
 
 def main():
-    # 只用指挥官专用凭证，禁止回退到 FEISHU_APP_ID，否则会和脑暴机器人共用同一 app 导致「打开脑暴单聊时收到两个欢迎卡片」
+    # 只用自媒体助手专用凭证，禁止回退到 FEISHU_APP_ID，否则会和脑暴机器人共用同一 app 导致「打开脑暴单聊时收到两个欢迎卡片」
     app_id = (os.environ.get("CONDUCTOR_FEISHU_APP_ID") or "").strip()
     app_secret = (os.environ.get("CONDUCTOR_FEISHU_APP_SECRET") or "").strip()
     if not app_id or not app_secret:
         print(file=sys.stderr)
         print("=" * 60, file=sys.stderr)
-        print("  指挥官需要飞书应用凭证才能连接飞书", file=sys.stderr)
+        print("  自媒体助手需要飞书应用凭证才能连接飞书", file=sys.stderr)
         print("=" * 60, file=sys.stderr)
-        print("  请在 .env 中配置（必须使用指挥官自己的应用）：", file=sys.stderr)
+        print("  请在 .env 中配置（必须使用自媒体助手自己的应用）：", file=sys.stderr)
         print("    CONDUCTOR_FEISHU_APP_ID=你的AppID", file=sys.stderr)
         print("    CONDUCTOR_FEISHU_APP_SECRET=你的AppSecret", file=sys.stderr)
         print("  不要复用 FEISHU_APP_ID（那是脑暴用的），否则会和脑暴共用一个 app 导致双欢迎卡片。", file=sys.stderr)
@@ -773,13 +773,13 @@ def main():
     os.environ["FEISHU_APP_ID"] = app_id
     os.environ["FEISHU_APP_SECRET"] = app_secret
 
-    _log("自媒体指挥官启动")
+    _log("自媒体助手启动")
     print("=" * 60)
-    print("AIlarkteams 自媒体指挥官（长连接模式）")
+    print("AIlarkteams 自媒体助手（长连接模式）")
     print()
     print("使用方式：在飞书上给机器人发消息，输入主题即可。")
-    print("  例：光遇归来季社交媒体内容")
-    print("  例：深度：光遇 × 茶馆联动快闪活动")
+    print("  例：春天穿搭分享")
+    print("  例：深度：咖啡品牌 × 音乐节联动")
     print()
     print("机器人会自动：扫描热点 → 产出创意 → 生成内容 → 存储到仓库")
     print("你可以随时查看草稿、审批发布、设置定时发布。")

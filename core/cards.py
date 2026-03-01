@@ -19,7 +19,7 @@
   >>> card = welcome_card("脑暴机器人", "我能帮你...", examples=[...], hints=[...])
   >>>
   >>> # 进度卡片
-  >>> card = progress_card("正在启动脑暴", "主题：光遇 × 洛阳")
+  >>> card = progress_card("正在启动脑暴", "主题：咖啡品牌 × 音乐节")
   >>>
   >>> # 结果卡片
   >>> card = result_card("脑暴完成", body="...", next_actions=["改一下", "再来一次"])

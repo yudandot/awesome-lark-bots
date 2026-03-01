@@ -39,3 +39,18 @@ services:
     restart: always
     volumes:
       - ./data:/app/data
+
+  newsbot:
+    build: .
+    command: python3 -m newsbot
+    env_file: .env
+    restart: always
+
+  conductor:
+    build: .
+    command: python3 -m conductor
+    env_file: .env
+    restart: always
+    volumes:
+      - ./data:/app/data
+      - ./runs:/app/runs

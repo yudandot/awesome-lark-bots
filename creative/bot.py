@@ -4,7 +4,7 @@
 =====================================================
 
 这是什么？
-  告诉这个机器人你想要什么素材（如「光遇云海日出的抖音预告」），
+  告诉这个机器人你想要什么素材（如「春日樱花的抖音预告」），
   它会生成可以直接复制到 Seedance / Nano Banana 等 AI 视频工具的 prompt。
 
 两种使用方式：
@@ -284,10 +284,10 @@ def _welcome_card() -> dict:
         )},
         {"text": (
             "**直接出 prompt：**\n"
-            "> 归来季云海和重逢主题的抖音预告\n"
-            "> 两个光之子在云野牵手飞翔，小红书15秒\n\n"
+            "> 春日花海中一对朋友漫步的抖音预告\n"
+            "> 咖啡师拉花特写，小红书15秒\n\n"
             "**想先讨论方向？**\n"
-            "> 聊聊：我想做一个关于重逢的视频\n"
+            "> 聊聊：我想做一个关于春日出游的视频\n"
             "> 你觉得这个用什么风格好？\n"
             "> （聊完发「**生成**」出正式 prompt）"
         )},
@@ -319,7 +319,7 @@ def _get_session(user_key: str) -> dict:
         session = {
             "brand": None,          # 当前品牌 profile（dict 或 None）
             "last_result": None,    # 上次生成的 prompt 文本（用于「改一下」）
-            "brand_name": "sky",    # 品牌名（显示用）
+            "brand_name": "",       # 品牌名（显示用），空=通用
             "mode": "direct",       # 当前模式：direct（直接生成）| chat（讨论中）
             "chat_history": [],     # 讨论模式的对话历史
         }
@@ -675,7 +675,7 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                 ], color="indigo"))
 
                 brand = session.get("brand")
-                brand_name = brand.get("name", "通用") if brand else "光遇"
+                brand_name = brand.get("name", "通用") if brand else "通用"
                 try:
                     result = _do_generate_from_chat(user_key)
                     if result:
@@ -718,7 +718,7 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                 try:
                     result = _do_refine(user_key, action[1])
                     brand = session.get("brand")
-                    brand_name = brand.get("name", "通用") if brand else "光遇"
+                    brand_name = brand.get("name", "通用") if brand else "通用"
                     if result:
                         card = _format_prompt_card(result, brand_name)
                         card["header"]["title"]["content"] = "修改后的 Prompt"
@@ -778,7 +778,7 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                 _running[user_key] = True
 
             brand = session.get("brand")
-            brand_name = brand.get("name", "通用") if brand else "光遇"
+            brand_name = brand.get("name", "通用") if brand else "通用"
             reply_card(mid, _card("正在生成...", [
                 {"text": f"**需求：**{text[:200]}"},
                 {"text": f"品牌：{brand_name}"},
@@ -819,10 +819,10 @@ def _help_card() -> dict:
         {"text": (
             "**两种使用方式：**\n\n"
             "**1. 直接生成** — 发需求描述，立即出 prompt\n"
-            "> 归来季云海和重逢主题的抖音预告\n"
-            "> 两个光之子在云野牵手飞翔，小红书15秒\n\n"
+            "> 春日花海中一对朋友漫步的抖音预告\n"
+            "> 咖啡师拉花特写，小红书15秒\n\n"
             "**2. 先讨论再生成** — 聊创意方向，确认后再出\n"
-            "> 聊聊：想做一个关于重逢的视频\n"
+            "> 聊聊：想做一个关于春日出游的视频\n"
             "> 你觉得这个主题怎么拍？\n"
             "> （讨论完发「**生成**」出正式 prompt）"
         )},
@@ -844,7 +844,7 @@ def _help_card() -> dict:
             "- 超 15 秒需求自动分镜 + 角色一致性建议\n"
             "- 配套平台文案"
         )},
-        {"note": "默认品牌：光遇 (Sky)  ·  LLM: DeepSeek"},
+        {"note": "默认品牌：通用  ·  发「品牌：sky」可切换  ·  LLM: DeepSeek"},
     ], color="blue")
 
 
@@ -926,8 +926,8 @@ def main():
     print("AIlarkteams 创意 Prompt 机器人（长连接模式）")
     print()
     print("使用方式：在飞书上给机器人发消息，描述想要的素材即可。")
-    print("  例：归来季云海和重逢主题的抖音预告")
-    print("  例：两个光之子在云野牵手飞翔")
+    print("  例：春日花海中一对朋友漫步的抖音预告")
+    print("  例：咖啡师拉花特写，小红书15秒")
     print()
     print("飞书开放平台配置：")
     print("  1. 先保持本程序运行")

@@ -56,7 +56,7 @@ UNIFIED_MAX_PAGES = int(os.getenv("UNIFIED_MAX_PAGES", "20"))
 PLATFORM_MAX_PAGES = int(os.getenv("PLATFORM_MAX_PAGES", "30"))
 PLATFORM_PAGES_DEEP = {"douyin": 50, "xiaohongshu": 50, "kuaishou": 50}
 MAX_POSTS = 5000
-MIN_POSTS_SKY_WEEKLY = 5000
+MIN_POSTS_BRAND_WEEKLY = 5000
 KIMI_SAMPLE = 2000
 MIN_PER_PLATFORM = 80
 TARGET_DOUYIN = 450
@@ -147,7 +147,6 @@ NEG_KW = frozenset(
     "闪退 举报 投诉 割韭菜 贵 差 崩 卡 黑心 敷衍 维权 炸服".split()
 )
 STOP_WORDS = frozenset(
-    "光遇 光·遇 Sky光遇 光之子 光崽 thatskyshop 光之子友友会 "
     "的 了 是 在 我 你 他 她 它 和 有 就 也 都 不 吗 啊 呢 吧 "
     "这个 一个 什么 怎么 还是 可以 已经 自己 他们 我们 没有 "
     "知道 时候 现在 真的 比较 但是 如果 还有 因为 所以 而且 "

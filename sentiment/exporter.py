@@ -128,7 +128,7 @@ def export_analysis_markdown(posts: list[dict], stats: dict, profile: dict) -> P
     # ── 尾部 prompt 模板
     sections.append("---\n")
     sections.append("## 建议 Prompt（可直接粘贴到 AI 客户端）\n")
-    subject = profile.get("subject", "《光·遇》")
+    subject = profile.get("subject", "品牌")
     sections.append(f"""```
 你是一名资深游戏舆情与社区生态分析师。以下是{subject}在中国大陆社交媒体上 {start_s} 至 {end_s} 期间的采集数据和统计。
 

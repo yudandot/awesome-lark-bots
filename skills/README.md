@@ -22,7 +22,7 @@ for s in list_skills():
 ctx = load_context("brand", brand_name="sky")
 
 # 加载品牌知识（从文本自动识别）
-ctx = load_context("brand", detect_from="帮我做一个光遇的素材")
+ctx = load_context("brand", detect_from="帮我做一个春日系列的素材")
 
 # 加载营销知识（全部摘要）
 ctx = load_context("marketing")

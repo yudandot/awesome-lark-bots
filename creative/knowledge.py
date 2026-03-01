@@ -103,47 +103,47 @@ Seedance prompt: "具体画面描述, 环境光线, 镜头运动, 风格质感, 
 
 <example>
 ━━ 角色定妆 & 视觉参考 ━━
-角色定妆（中文）：两名光之子，一名穿红色新年限定斗篷，一名穿蓝色星光斗篷。身高矮小可爱，无面部特征，头顶发光。
-Character reference (EN): "Two small cute Sky children, one wearing a red Chinese New Year limited edition cape, one wearing a blue starlight cape. Short stature, no facial features, glowing light on top of head."
+角色定妆（中文）：一位穿白色连衣裙的女孩和一位穿蓝色棉麻衬衫的男孩，年龄约25岁，笑容温暖自然，发型简约清爽。
+Character reference (EN): "A young woman in a white summer dress and a young man in a blue linen shirt, both around 25 years old, warm natural smiles, simple clean hairstyles."
 视觉参考建议：
 - 建议先用 Nano Banana 生成角色定妆照，所有 Shot 用同一张参考图
 - Seedance 选「图生视频」模式，上传定妆照作为参考
 - 每个 Shot 结束后截取末帧，作为下一个 Shot 的起始参考图
-全局负面提示：realistic style, dark tones, facial close-up, modern buildings, text overlay, neon colors, fast flashing cuts
+全局负面提示：dark tones, horror elements, neon colors, fast flashing cuts, text overlay, blurry faces
 
 ━━ Shot 1 / 4（8s）━━
-【画面】云海中一道金光裂开，一匹光粒子构成的天马从云缝中缓缓降落到草地上，马蹄踏地溅起金色涟漪
-【镜头】固定仰拍，从云缝金光到天马降落
-【氛围】神秘、期待、奇幻
-Seedance prompt: "A magical golden crack opens in a sea of fluffy white clouds, a translucent celestial horse made of soft golden and pink light particles slowly descends through the gap onto a lush green meadow. As its hooves touch the grass, golden ripples of light spread outward. Fixed low-angle shot looking up at the sky, warm sunrise lighting with god rays, Studio Ghibli animation style with watercolor textures, 9:16 vertical, 8s."
+【画面】清晨的花海中，阳光穿过薄雾洒在大片薰衣草田上，一条小路延伸向远方，微风轻拂花朵
+【镜头】固定机位，缓慢推进
+【氛围】宁静、期待、清新
+Seedance prompt: "A vast lavender field at dawn, soft morning sunlight piercing through thin mist, golden god rays falling on purple flowers stretching to the horizon. A narrow path winds through the field. Gentle breeze makes flowers sway slightly. Fixed camera with slow push-in, warm sunrise color palette, watercolor animation style with soft textures, 9:16 vertical, 8s."
 
 ━━ Shot 2 / 4（8s）━━
-【画面】两名光之子站在草地上好奇仰望，其中一个试探性地伸出手，天马低头靠近，鼻尖触碰光之子的手掌，触碰处绽放出一圈暖光
-【镜头】缓慢推进，从中景推到手掌触碰的特写
-【氛围】温暖、信任、治愈
-Seedance prompt: "Two small cute Sky children wearing red and blue capes stand on a green meadow looking up with curiosity. One child tentatively reaches out a hand. A translucent celestial horse made of golden and pink light particles lowers its head gently, its nose touching the child palm. A warm glow blooms from the point of contact. Slow push-in from medium shot to close-up of the touching hands, warm golden hour lighting, Ghibli-style watercolor animation, 9:16 vertical, 8s."
+【画面】两位年轻人走进花海，女孩伸手触碰花朵，花瓣随风飘散，男孩在身旁微笑注视
+【镜头】缓慢推进，从中景推到手触花朵的特写
+【氛围】温暖、浪漫、治愈
+Seedance prompt: "A young woman in a white dress and a young man in a blue linen shirt walk into a lavender field. She reaches out to touch a flower gently, petals drift in the breeze. He watches with a warm smile beside her. Slow push-in from medium shot to close-up of her hand touching the flower, warm golden hour lighting, soft watercolor animation style, 9:16 vertical, 8s."
 
 ━━ Shot 3 / 4（7s）━━
-【画面】天马展开光翼，两名光之子骑在马背上，天马腾空而起，飞越云海，身后拖出一条彩色光带
-【镜头】跟拍上升，从地面跟到空中
-【氛围】自由、喜悦、飞翔
-Seedance prompt: "A translucent celestial horse made of golden and pink light particles spreads its luminous wings wide. Two small cute Sky children in red and blue capes sit on its back. The horse leaps into the air and soars above a vast sea of white clouds, trailing a rainbow ribbon of light behind. Follow shot rising from ground to sky, warm sunset backlight, Ghibli-style animation with hand-painted cloud textures, 9:16 vertical, 7s."
+【画面】两人在花海中奔跑，女孩的裙摆和花瓣一起飞扬，身后留下一条欢笑的轨迹
+【镜头】跟拍，从侧面跟随奔跑
+【氛围】自由、喜悦、青春
+Seedance prompt: "A young woman in a white dress and a young man in a blue shirt running joyfully through a lavender field. Her dress hem and flower petals flutter together in the wind. Camera follows from the side at the same pace, warm afternoon backlight creating lens flare, watercolor animation style with hand-painted textures, 9:16 vertical, 7s."
 
 ━━ Shot 4 / 4（7s）━━
-【画面】光之子们降落在遇境，围坐在一个发光的茶杯型装置旁，互相举杯致意，蜡烛光和蝴蝶环绕
+【画面】日落时分，两人坐在花田边的木椅上，手捧热饮，夕阳将一切染成金色
 【镜头】缓慢环绕拍摄，从侧面到正面
-【氛围】团圆、温馨、新年
-Seedance prompt: "Two small cute Sky children in red and blue capes sit beside a large glowing teacup-shaped structure surrounded by floating candles and butterflies in a cozy Home Space. They raise small cups toward each other in a toast gesture. Warm amber candlelight fills the scene. Slow orbiting camera from side to front, soft focus with slight film grain, Ghibli-style warm color palette, 9:16 vertical, 7s."
+【氛围】温馨、满足、幸福
+Seedance prompt: "At sunset, a young woman in white and a young man in blue sit on a wooden bench at the edge of a lavender field, holding warm cups. Golden sunset light bathes everything in amber. Butterflies flutter nearby. Slow orbiting camera from side to front, soft focus with slight film grain, warm watercolor palette, 9:16 vertical, 7s."
 
 ━━ 剪辑建议 ━━
-Shot 1→2：叠化（天马降落 → 光之子视角）
-Shot 2→3：匹配剪辑（手掌触碰光芒 → 展翅）
-Shot 3→4：渐白转场（飞翔光芒 → 遇境暖光）
-配乐：空灵钢琴 + 弦乐，Shot 3 情绪上扬，Shot 4 回归舒缓
+Shot 1→2：叠化（花海全景 → 人物走入）
+Shot 2→3：匹配剪辑（手触花朵 → 奔跑）
+Shot 3→4：渐暖转场（奔跑光芒 → 日落暖光）
+配乐：轻柔吉他 + 钢琴，Shot 3 情绪上扬，Shot 4 回归舒缓
 
 ━━ 配套文案 ━━
-【抖音】马上有光！✨ 当灵感降临云野…… #光遇 #联动 #治愈系
-【小红书】这个春节，光遇世界来了一位特别的客人 🐴✨ 你猜是谁？#光遇日常 #游戏联动
+【抖音】春日限定来了！✨ 当阳光洒满花海…… #春日限定 #治愈系 #生活美学
+【小红书】这个春天，来一场说走就走的花海之旅 🌸✨ 你准备好了吗？#春日打卡 #周末好去处
 </example>
 
 以上是完整示例。注意每个 Shot 的 Seedance prompt 都是独立完整的、纯英文的、≤10 秒的。
@@ -234,12 +234,11 @@ def load_brand_by_name(name: str) -> Optional[dict]:
     return None
 
 
+# ⚠️ 示例：品牌关键词映射，请根据你的品牌进行自定义。
+# key 对应 brands/ 目录下的 YAML 文件名（不含后缀）。
 _BRAND_KEYWORDS: dict[str, list[str]] = {
-    "sky": [
-        "光遇", "sky", "光之子",
-        "thatgamecompany", "tgc", "那家游戏公司", "陈星汉",
-        "thatskyshop", "光之子友友会",
-        "遇境", "云野", "霞谷", "暴风眼", "禁阁", "雨林", "墓土",
+    "example": [
+        "示例品牌", "example brand", "mybrand",
     ],
 }
 
@@ -375,7 +374,7 @@ def build_system_prompt(brand: Optional[dict] = None) -> str:
 
 未加载特定品牌 profile。请根据用户描述的品牌/产品信息，
 推断合适的视觉风格和调性来生成 prompt。
-重要：不要使用系统 prompt 示例中的品牌（光遇/Sky）内容，完全按用户实际提到的品牌创作。
+重要：不要使用系统 prompt 示例中的品牌内容，完全按用户实际提到的品牌创作。
 """
 
     return prompt

@@ -42,7 +42,8 @@ from core.utils import load_context, run_timestamp, save_session, truncate_for_d
 from skills import load_context as load_skill_context
 
 def _send_brainstorm_card(title: str, content: str, color: str = "blue") -> bool:
-    webhook = (_os.environ.get("FEISHU_WEBHOOK") or "").strip()
+    # 被自媒体助手调用时，优先用自媒体助手指定的脑暴推送 webhook
+    webhook = (_os.environ.get("CONDUCTOR_BRAINSTORM_WEBHOOK") or _os.environ.get("FEISHU_WEBHOOK") or "").strip()
     if not webhook:
         return False
     secret = (_os.environ.get("FEISHU_SECRET") or "").strip()

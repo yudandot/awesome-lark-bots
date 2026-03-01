@@ -25,10 +25,11 @@ def _warn(msg: str) -> None:
 
 
 def _get_credentials():
-    app_id = (os.environ.get("SENTIMENT_FEISHU_APP_ID") or "").strip()
-    app_secret = (os.environ.get("SENTIMENT_FEISHU_APP_SECRET") or "").strip()
+    """与 sentiment/bot.py main() 一致：优先 SENTIMENT_*，未配则回退到 FEISHU_APP_ID/SECRET。"""
+    app_id = (os.environ.get("SENTIMENT_FEISHU_APP_ID") or os.environ.get("FEISHU_APP_ID") or "").strip()
+    app_secret = (os.environ.get("SENTIMENT_FEISHU_APP_SECRET") or os.environ.get("FEISHU_APP_SECRET") or "").strip()
     if not app_id or not app_secret:
-        raise ValueError("请设置环境变量 SENTIMENT_FEISHU_APP_ID 和 SENTIMENT_FEISHU_APP_SECRET")
+        raise ValueError("请设置环境变量 SENTIMENT_FEISHU_APP_ID 和 SENTIMENT_FEISHU_APP_SECRET（或 FEISHU_APP_ID / FEISHU_APP_SECRET）")
     return app_id, app_secret
 
 

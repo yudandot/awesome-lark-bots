@@ -158,10 +158,36 @@ def generate_report(
             global_news=raw_data["global_news"],
             rss_data=raw_data["rss"],
             date_str=date_str,
+            hackernews=raw_data.get("hackernews", []),
         )
         log.info("AI 分析完成: %.1fs, %d 个区域", time.time() - t0, len(ai_results))
     else:
         log.info("Phase 2: 跳过 AI 分析 (--no-ai)")
+
+    # 2.5 翻译外语 RSS 标题
+    if with_ai:
+        log.info("Phase 2.5: 翻译外语标题...")
+        t0 = time.time()
+        from newsbot.translate import translate_rss_titles
+        # RSS: {region: {source: [items]}} — 逐 region 翻译
+        for _rk, region_sources in raw_data["rss"].items():
+            if region_sources:
+                translate_rss_titles(region_sources)
+        # Google News Global
+        if raw_data.get("global_news"):
+            translate_rss_titles({"Global": raw_data["global_news"]})
+        # Hacker News
+        if raw_data.get("hackernews"):
+            translate_rss_titles({"HN": raw_data["hackernews"]})
+        # Reddit: {region: {subreddit: [items]}}
+        for _rk, sub_data in raw_data["reddit"].items():
+            if sub_data:
+                translate_rss_titles(sub_data)
+        # 港台 Google News
+        for k in list(raw_data["hk_tw"].keys()):
+            if "Google News" in k:
+                translate_rss_titles({k: raw_data["hk_tw"][k]})
+        log.info("翻译完成: %.1fs", time.time() - t0)
 
     # 3. 格式化
     log.info("Phase 3: 格式化输出...")

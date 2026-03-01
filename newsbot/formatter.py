@@ -1,205 +1,25 @@
 # -*- coding: utf-8 -*-
 """
-Markdown 格式化输出 — 将原始数据 + AI 分析组装为最终日报。
+Markdown 格式化 — 信息充分、重点突出、紧凑可读。
+
+结构：AI 精炼分析在前（重点），原始数据表在后（充分信息）。
 """
 
 from __future__ import annotations
 
-from datetime import datetime
-
-from newsbot.config import BEIJING, DATA_SOURCES_LINE, REGIONS, log
+from newsbot.config import DATA_SOURCES_LINE, log
 
 
-def _trending_table(items: list[dict], extra_col: str = "") -> str:
-    """生成热榜表格。"""
+def _compact_table(items: list[dict], show_score: bool = True) -> str:
+    """紧凑表格：序号 + 标题 + 可选热度，不画表格线。"""
     if not items:
-        return "_（数据暂缺）_\n"
+        return "_暂无数据_\n"
     lines: list[str] = []
-    if extra_col:
-        lines.append(f"| 排名 | 话题 | {extra_col} |")
-        lines.append(f"|------|------|{'------' * (len(extra_col) // 3 + 1)}|")
-        for item in items:
-            lines.append(f"| {item['rank']} | {item['title']} | {item.get('hot_score', '')} |")
-    else:
-        lines.append("| 排名 | 话题 |")
-        lines.append("|------|------|")
-        for item in items:
-            score = f" ({item['hot_score']})" if item.get("hot_score") else ""
-            lines.append(f"| {item['rank']} | {item['title']}{score} |")
-    return "\n".join(lines) + "\n"
-
-
-def _rss_table(items: list[dict]) -> str:
-    """生成 RSS 新闻表格。"""
-    if not items:
-        return "_（数据暂缺）_\n"
-    lines: list[str] = []
-    lines.append("| 排名 | 话题 |")
-    lines.append("|------|------|")
     for item in items:
-        lines.append(f"| {item['rank']} | {item['title']} |")
+        score = f"  `{item['hot_score']}`" if show_score and item.get("hot_score") else ""
+        lines.append(f"{item['rank']}. {item['title']}{score}")
     return "\n".join(lines) + "\n"
 
-
-def _source_links(platform: str) -> str:
-    """平台数据来源标注。"""
-    links_map = {
-        "微博热搜": "[微博实时热点](https://weibo.com/a/hot/realtime) | [热搜时光机](https://www.weibotop.cn/2.0/) | [今日热榜](https://tophub.today/)",
-        "百度热搜": "[百度热搜](https://top.baidu.com/board) | [今日热榜](https://tophub.today/)",
-        "知乎热榜": "[知乎热榜](https://www.zhihu.com/hot) | [今日热榜](https://tophub.today/)",
-        "哔哩哔哩": "[哔哩哔哩](https://www.bilibili.com) | [今日热榜](https://tophub.today/)",
-        "小红书": "[小红书](https://www.xiaohongshu.com) | [新榜](https://www.newrank.cn/)",
-        "抖音热搜": "[抖音](https://www.douyin.com) | [今日热榜](https://tophub.today/)",
-        "今日头条": "[今日头条](https://www.toutiao.com) | [今日热榜](https://tophub.today/)",
-        "微信热文": "[微信公众平台](https://mp.weixin.qq.com) | [今日热榜](https://tophub.today/)",
-        "澎湃热榜": "[澎湃新闻](https://www.thepaper.cn) | [今日热榜](https://tophub.today/)",
-        "PTT（台湾）": "[PTT网页版](https://www.pttweb.cc/hot/all/today) | [Mo PTT](https://moptt.tw/popular)",
-        "Dcard（台湾）": "[Dcard 热门](https://www.dcard.tw/f)",
-        "LIHKG（香港）": "[LIHKG 讨论区](https://lihkg.com)",
-    }
-    return links_map.get(platform, "")
-
-
-# ---------------------------------------------------------------------------
-# 华人圈部分
-# ---------------------------------------------------------------------------
-
-def format_chinese_section(
-    ai_analysis: str,
-    cn_trending: dict[str, list[dict]],
-    hk_tw_data: dict[str, list[dict]],
-    reddit_cn: dict[str, list[dict]],
-    xiaohongshu: list[dict],
-) -> str:
-    """格式化华人圈完整部分。"""
-    lines: list[str] = []
-
-    lines.append("## 🌏 华人圈热点日报")
-    lines.append("### 🤖 AI 深度分析")
-    if ai_analysis:
-        lines.append(ai_analysis)
-    else:
-        lines.append("_（AI 分析生成中或数据不足）_")
-    lines.append("")
-
-    # 原始数据表格
-    lines.append("---")
-    lines.append("### 📊 各平台原始数据")
-
-    # 中国大陆平台
-    platform_order = [
-        "微博热搜", "百度热搜", "知乎热榜", "哔哩哔哩",
-        "抖音热搜", "今日头条", "微信热文", "澎湃热榜",
-    ]
-    for platform_name in platform_order:
-        items = cn_trending.get(platform_name, [])
-        if not items and platform_name not in ("微博热搜", "百度热搜", "知乎热榜"):
-            continue
-        lines.append(f"#### {platform_name}")
-        if platform_name == "哔哩哔哩":
-            lines.append(_trending_table(items, "播放量"))
-        else:
-            lines.append(_trending_table(items))
-        src = _source_links(platform_name)
-        if src:
-            lines.append(f"> 数据来源：{src}")
-        lines.append("")
-
-    # 小红书
-    if xiaohongshu:
-        lines.append("#### 小红书")
-        lines.append(_trending_table(xiaohongshu))
-        lines.append(f"> 数据来源：{_source_links('小红书')}")
-        lines.append("")
-
-    # 港台平台
-    hk_tw_order = [
-        "PTT（台湾）", "Dcard（台湾）", "Google News台湾",
-        "LIHKG（香港）", "Google News香港",
-    ]
-    for platform_name in hk_tw_order:
-        items = hk_tw_data.get(platform_name, [])
-        if not items:
-            continue
-        lines.append(f"#### {platform_name}")
-        if platform_name.startswith("Google News"):
-            lines.append(_rss_table(items))
-        else:
-            lines.append(_trending_table(items))
-        src = _source_links(platform_name)
-        if src:
-            lines.append(f"> 数据来源：{src}")
-        lines.append("")
-
-    # Reddit
-    if reddit_cn:
-        lines.append("#### 海外华人 Reddit")
-        all_reddit: list[dict] = []
-        for sub_items in reddit_cn.values():
-            all_reddit.extend(sub_items)
-        for i, item in enumerate(all_reddit[:MAX_REDDIT_DISPLAY], 1):
-            item["rank"] = i
-        lines.append(_trending_table(all_reddit[:MAX_REDDIT_DISPLAY]))
-        subs = " | ".join(f"[{s}](https://www.reddit.com/{s}/)" for s in reddit_cn)
-        lines.append(f"> 数据来源：{subs}")
-        lines.append("")
-
-    return "\n".join(lines)
-
-
-MAX_REDDIT_DISPLAY = 8
-
-
-# ---------------------------------------------------------------------------
-# 国际区域部分
-# ---------------------------------------------------------------------------
-
-def format_international_section(
-    region_key: str,
-    ai_analysis: str,
-    rss_data: dict[str, list[dict]],
-    reddit_data: dict[str, list[dict]] | None = None,
-) -> str:
-    """格式化一个国际区域的完整部分。"""
-    region_cfg = REGIONS.get(region_key, {})
-    emoji = region_cfg.get("emoji", "🌍")
-    name = region_cfg.get("name", region_key)
-
-    lines: list[str] = []
-    lines.append(f"## {emoji} {name}")
-    lines.append("### 🤖 AI 深度分析")
-    if ai_analysis:
-        lines.append(ai_analysis)
-    else:
-        lines.append("_（AI 分析生成中或数据不足）_")
-    lines.append("")
-
-    lines.append("---")
-    lines.append("### 📊 各平台原始数据")
-
-    country_names = region_cfg.get("country_names", {})
-
-    for source_name, items in rss_data.items():
-        if not items:
-            continue
-        lines.append(f"#### {source_name}")
-        lines.append(_rss_table(items))
-        lines.append("")
-
-    if reddit_data:
-        for sub, items in reddit_data.items():
-            if not items:
-                continue
-            lines.append(f"#### Reddit {sub}")
-            lines.append(_trending_table(items))
-            lines.append("")
-
-    return "\n".join(lines)
-
-
-# ---------------------------------------------------------------------------
-# 组装完整日报
-# ---------------------------------------------------------------------------
 
 def format_full_report(
     date_str: str,
@@ -212,86 +32,117 @@ def format_full_report(
     global_news: list[dict] | None = None,
     hackernews: list[dict] | None = None,
 ) -> str:
-    """组装完整的早知天下事日报。"""
-    sections: list[str] = []
+    s: list[str] = []
 
     # ── 头部
-    sections.append(f"# 早知天下事热点日报 · {date_str}")
-    sections.append(f"> {DATA_SOURCES_LINE}")
-    sections.append("---")
-    sections.append("")
+    s.append(f"# ☀️ 早知天下事 · {date_str}\n")
+    s.append(f"> {DATA_SOURCES_LINE}\n")
 
-    # ── 华人圈
-    cn_section = format_chinese_section(
-        ai_analysis=ai_results.get("cn", ""),
-        cn_trending=cn_trending,
-        hk_tw_data=hk_tw_data,
-        reddit_cn=reddit_data.get("cn", {}),
-        xiaohongshu=xiaohongshu,
-    )
-    sections.append(cn_section)
-    sections.append("---")
-    sections.append("")
+    # ══════ 华人圈 ══════
+    s.append("---")
+    s.append("## 🇨🇳 华人圈要点\n")
+    cn = ai_results.get("cn", "")
+    if cn:
+        s.append(cn)
+    else:
+        s.append("_AI 分析未生成_")
+    s.append("")
 
-    # ── 越南
-    vn_feeds = rss_data.get("vn", {})
-    if vn_feeds or ai_results.get("vn"):
-        vn_section = format_international_section(
-            "vn", ai_results.get("vn", ""), vn_feeds,
-        )
-        sections.append(vn_section)
-        sections.append("---")
-        sections.append("")
+    # ── 各平台热搜（全量保留）
+    s.append("---")
+    s.append("## 📊 各平台热搜\n")
 
-    # ── 亚太
-    asia_feeds: dict[str, list[dict]] = {}
-    for country_key in ("in", "id", "kr", "jp"):
-        for source, items in rss_data.get(country_key, {}).items():
-            country_name = {"in": "印度", "id": "印尼", "kr": "韩国", "jp": "日本"}.get(country_key, "")
-            asia_feeds[f"{country_name} {source}"] = items
-    if asia_feeds or ai_results.get("asia"):
-        asia_section = format_international_section(
-            "asia", ai_results.get("asia", ""), asia_feeds,
-            reddit_data.get("asia"),
-        )
-        sections.append(asia_section)
-        sections.append("---")
-        sections.append("")
+    cn_platforms = [
+        ("🔴 微博", "微博热搜"),
+        ("🔵 百度", "百度热搜"),
+        ("🟡 知乎", "知乎热榜"),
+        ("🎬 B站", "哔哩哔哩"),
+        ("🎵 抖音", "抖音热搜"),
+        ("📰 头条", "今日头条"),
+        ("💬 微信", "微信热文"),
+        ("📋 澎湃", "澎湃热榜"),
+    ]
+    for label, key in cn_platforms:
+        items = cn_trending.get(key, [])
+        if items:
+            s.append(f"**{label}**")
+            s.append(_compact_table(items))
 
-    # ── 欧美
-    west_feeds: dict[str, list[dict]] = {}
-    for country_key in ("us", "uk", "de", "fr"):
-        for source, items in rss_data.get(country_key, {}).items():
-            country_name = {"us": "美国", "uk": "英国", "de": "德国", "fr": "法国"}.get(country_key, "")
-            west_feeds[f"{country_name} {source}"] = items
-    if west_feeds or ai_results.get("west"):
-        west_section = format_international_section(
-            "west", ai_results.get("west", ""), west_feeds,
-            reddit_data.get("west"),
-        )
-        sections.append(west_section)
-        sections.append("---")
-        sections.append("")
+    # 港台
+    hktw_platforms = [
+        ("🇹🇼 PTT", "PTT（台湾）"),
+        ("🇹🇼 Google News台湾", "Google News台湾"),
+        ("🇭🇰 LIHKG", "LIHKG（香港）"),
+        ("🇭🇰 Google News香港", "Google News香港"),
+    ]
+    for label, key in hktw_platforms:
+        items = hk_tw_data.get(key, [])
+        if items:
+            s.append(f"**{label}**")
+            s.append(_compact_table(items, show_score=key.startswith("Google") is False))
 
-    # ── 全球热点 & 科技前沿
-    if global_news or hackernews:
-        sections.append("## 🌐 全球热点 & 科技前沿")
-        if global_news:
-            sections.append("#### Google News 全球热点")
-            sections.append(_rss_table(global_news))
-            sections.append("")
-        if hackernews:
-            sections.append("#### Hacker News 科技前沿")
-            sections.append(_rss_table(hackernews))
-            sections.append("")
-        sections.append("---")
-        sections.append("")
+    # Reddit 华人
+    reddit_cn = reddit_data.get("cn", {})
+    if reddit_cn:
+        s.append("**🌐 Reddit 华人社区**")
+        all_items: list[dict] = []
+        for sub_items in reddit_cn.values():
+            all_items.extend(sub_items)
+        for i, item in enumerate(all_items[:10], 1):
+            item["rank"] = i
+        s.append(_compact_table(all_items[:10]))
 
-    # ── 重要新闻详细摘要
-    summaries = ai_results.get("summaries", "")
-    if summaries:
-        sections.append("## 重要新闻详细摘要")
-        sections.append(summaries)
-        sections.append("")
+    # ══════ 国际 ══════
+    s.append("---")
+    s.append("## 🌍 国际要点\n")
+    intl = ai_results.get("intl", "")
+    if intl:
+        s.append(intl)
+    else:
+        s.append("_AI 分析未生成_")
+    s.append("")
 
-    return "\n".join(sections)
+    # ── 国际 RSS 原始数据（全量保留，但标注来源国）
+    s.append("---")
+    s.append("## 📡 国际新闻源\n")
+
+    region_labels = {
+        "vn": "🇻🇳 越南", "jp": "🇯🇵 日本", "kr": "🇰🇷 韩国",
+        "in": "🇮🇳 印度", "id": "🇮🇩 印尼",
+        "us": "🇺🇸 美国", "uk": "🇬🇧 英国", "de": "🇩🇪 德国", "fr": "🇫🇷 法国",
+    }
+    for region_key in ("vn", "jp", "kr", "in", "id", "us", "uk", "de", "fr"):
+        feeds = rss_data.get(region_key, {})
+        if not feeds:
+            continue
+        label = region_labels.get(region_key, region_key)
+        s.append(f"**{label}**")
+        for source_name, items in feeds.items():
+            if items:
+                s.append(f"*{source_name}*")
+                s.append(_compact_table(items, show_score=False))
+
+    # Reddit 国际
+    for rk, rk_label in [("asia", "🌏 Reddit 亚太"), ("west", "🌍 Reddit 欧美")]:
+        rd = reddit_data.get(rk, {})
+        if rd:
+            s.append(f"**{rk_label}**")
+            for sub, items in rd.items():
+                if items:
+                    s.append(f"*{sub}*")
+                    s.append(_compact_table(items))
+
+    # 全球 + Hacker News
+    if global_news:
+        s.append("**🌐 Google News 全球**")
+        s.append(_compact_table(global_news, show_score=False))
+
+    if hackernews:
+        s.append("**💻 Hacker News**")
+        s.append(_compact_table(hackernews, show_score=False))
+
+    # ── 尾部
+    s.append("---")
+    s.append(f"*📡 数据采集自 20+ 平台 · AI 分析由 DeepSeek 生成*")
+
+    return "\n".join(s)

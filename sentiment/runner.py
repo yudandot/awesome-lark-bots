@@ -57,7 +57,7 @@ def _stats_summary(stats: dict) -> str:
 
 
 def run_collect(
-    profile_id: str = "sky-weekly",
+    profile_id: str = "brand-weekly",
     with_ai: bool = False,
     custom_keywords: list[str] | None = None,
     custom_platforms: list[str] | None = None,

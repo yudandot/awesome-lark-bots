@@ -12,8 +12,8 @@
   python3 -m brainstorm
 
 需要的环境变量：
-  FEISHU_APP_ID      飞书应用的 App ID
-  FEISHU_APP_SECRET  飞书应用的 App Secret
+  BRAINSTORM_FEISHU_APP_ID / BRAINSTORM_FEISHU_APP_SECRET（推荐，避免与指挥等共用 .env 时用错）
+  或 FEISHU_APP_ID / FEISHU_APP_SECRET  飞书应用的 App ID / Secret
   DEEPSEEK_API_KEY   DeepSeek 的 API Key（必须）
   DOUBAO_API_KEY     豆包的 API Key（脑暴必须）
   KIMI_API_KEY       Kimi 的 API Key（脑暴必须）
@@ -21,7 +21,7 @@
 
 消息格式：
   直接发消息内容即为脑暴主题，例如：
-    洛阳茶馆 × 光遇跨界快闪
+    咖啡品牌 × 音乐节跨界联动
   或带前缀：
     脑暴：给男人卖胸罩
   多行消息第一行为主题，其余为背景材料。
@@ -82,14 +82,17 @@ _TOPIC_PREFIXES = ("脑暴 ", "脑暴：", "脑暴:", "brainstorm ", "brainstorm
 def _welcome() -> dict:
     return welcome_card(
         "脑暴机器人",
-        "直接告诉我你想讨论什么，我会召集 **5 个 AI 角色** 进行四轮结构化脑暴，"
-        "讨论过程实时推送到飞书群。",
+        "**使用方式：**直接发消息，内容即为脑暴主题。可加「脑暴：」前缀，也可以不加。\n\n"
+        "**脑暴流程：**\n"
+        "1️⃣ DeepSeek 优化主题\n"
+        "2️⃣ 坚果五仁团队四轮讨论（实时推送飞书群）\n"
+        "3️⃣ 最终交付（总结 + Claude Code prompt + 视觉 prompt）",
         examples=[
-            "洛阳茶馆 × 光遇跨界快闪",
+            "咖啡品牌 × 音乐节跨界联动",
             "脑暴：给男人卖胸罩",
-            "三体 × 卖地球\n（第二行可附背景材料）",
+            "脑暴 三体 × 卖地球",
         ],
-        hints=["发送「帮助」查看详细说明", "多行消息第一行为主题"],
+        hints=["多行消息：第一行为主题，其余为背景材料", "发送「帮助」查看完整说明"],
     )
 
 
@@ -102,7 +105,7 @@ def _help() -> dict:
          "2️⃣ 坚果五仁团队四轮讨论（实时推送飞书群）\n"
          "3️⃣ 最终交付（总结 + Claude Code prompt + 视觉 prompt）"),
         ("示例",
-         "> 洛阳茶馆 × 光遇跨界快闪\n"
+         "> 咖啡品牌 × 音乐节跨界联动\n"
          "> 脑暴：给男人卖胸罩\n"
          "> 三体 × 卖地球"),
     ], footer="脑暴过程约 3-5 分钟，完成后会通知你")
@@ -236,13 +239,19 @@ def _handle_bot_p2p_chat_entered(data) -> None:
     try:
         open_id = None
         if hasattr(data, "event") and data.event:
-            user_id = getattr(data.event, "user_id", None) or getattr(data.event, "operator", None)
-            if user_id:
-                open_id = getattr(user_id, "open_id", None)
+            ev = data.event
+            for attr in ("operator_id", "operator", "user_id"):
+                obj = getattr(ev, attr, None)
+                if obj:
+                    open_id = getattr(obj, "open_id", None)
+                    if open_id:
+                        break
         if open_id:
             send_card_to_user(open_id, _welcome())
+        else:
+            _log("无法获取 open_id，跳过欢迎卡片")
     except Exception as e:
-        _log(f"发送欢迎卡片异常: {e}")
+        _log(f"发送欢迎卡片异常: {e}\n{traceback.format_exc()}")
 
 
 def _handle_message_read(_data) -> None:
@@ -272,10 +281,24 @@ def _run_client(app_id: str, app_secret: str) -> None:
 
 
 def main():
-    app_id = (os.environ.get("FEISHU_APP_ID") or "").strip()
-    app_secret = (os.environ.get("FEISHU_APP_SECRET") or "").strip()
+    # 优先用脑暴专用变量，避免与指挥/其他 bot 共用 FEISHU_APP_ID 时用错 token、发错欢迎卡片
+    app_id = (
+        os.environ.get("BRAINSTORM_FEISHU_APP_ID")
+        or os.environ.get("FEISHU_APP_ID")
+        or ""
+    ).strip()
+    app_secret = (
+        os.environ.get("BRAINSTORM_FEISHU_APP_SECRET")
+        or os.environ.get("FEISHU_APP_SECRET")
+        or ""
+    ).strip()
     if not app_id or not app_secret:
-        raise SystemExit("请设置环境变量 FEISHU_APP_ID 和 FEISHU_APP_SECRET（脑暴机器人）")
+        raise SystemExit(
+            "请设置环境变量 BRAINSTORM_FEISHU_APP_ID / BRAINSTORM_FEISHU_APP_SECRET（或 FEISHU_APP_ID / FEISHU_APP_SECRET）"
+        )
+    # 让 core.feishu_client 的 get_tenant_access_token 使用脑暴的凭证发消息/卡片
+    os.environ["FEISHU_APP_ID"] = app_id
+    os.environ["FEISHU_APP_SECRET"] = app_secret
 
     _log("脑暴机器人启动")
     print("=" * 60)
@@ -304,7 +327,7 @@ def main():
             _log(f"连接失败: {e}\n{traceback.format_exc()}")
             if attempt == 1:
                 print("\n若持续失败，请检查：", file=sys.stderr)
-                print("  1. FEISHU_APP_ID / FEISHU_APP_SECRET 是否正确", file=sys.stderr)
+                print("  1. BRAINSTORM_FEISHU_APP_ID / BRAINSTORM_FEISHU_APP_SECRET（或 FEISHU_APP_ID / SECRET）是否正确", file=sys.stderr)
                 print("  2. 应用是否已发布并启用", file=sys.stderr)
                 print("  3. 网络是否可访问 open.feishu.cn", file=sys.stderr)
         wait = min(delay, RECONNECT_MAX_DELAY)

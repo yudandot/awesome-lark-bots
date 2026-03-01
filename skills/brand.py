@@ -13,7 +13,7 @@
   >>> ctx = load_context("brand", brand_name="sky")
   >>>
   >>> # 从用户消息自动识别品牌
-  >>> ctx = load_context("brand", detect_from="帮我做一个光遇的素材")
+  >>> ctx = load_context("brand", detect_from="帮我做一个春日系列的素材")
   >>>
   >>> # 列出所有可用品牌
   >>> from skills.brand import BrandSkill
@@ -33,11 +33,9 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BRANDS_DIR = _PROJECT_ROOT / "creative" / "brands"
 
 _BRAND_KEYWORDS: dict[str, list[str]] = {
-    "sky": [
-        "光遇", "sky", "光之子",
-        "thatgamecompany", "tgc", "那家游戏公司", "陈星汉",
-        "thatskyshop", "光之子友友会",
-        "遇境", "云野", "霞谷", "暴风眼", "禁阁", "雨林", "墓土",
+    # ⚠️ 示例：请替换为你自己的品牌关键词
+    "example": [
+        "示例品牌", "example brand", "mybrand",
     ],
 }
 

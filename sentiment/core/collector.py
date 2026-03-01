@@ -407,22 +407,22 @@ def _fetch_browser_mcp_http(profile: dict, start_s: str, end_s: str) -> list[dic
 
 def _mock_posts():
     return [
-        {"platform": "微博", "title": "光遇新赛季体验",
-         "content": "新赛季的地图设计太美了，云野的瀑布场景让人流连忘返", "url": ""},
-        {"platform": "小红书", "title": "光遇穿搭分享",
-         "content": "分享一下我的光遇每日穿搭，今天是蝴蝶斗篷配魔法师面具", "url": ""},
-        {"platform": "B站", "title": "光遇新手教程",
-         "content": "萌新入坑指南！手把手教你收集光之翼", "url": ""},
-        {"platform": "抖音", "title": "光遇bug反馈",
-         "content": "暴风眼又穿模了，禁阁也闪退，官方快修", "url": ""},
-        {"platform": "知乎", "title": "光遇版本评价",
-         "content": "内购价格偏高，蜡烛获取量削减让老玩家不满", "url": ""},
-        {"platform": "快手", "title": "光遇钢琴",
-         "content": "光遇钢琴演奏天空之城，社交体验真的棒", "url": ""},
-        {"platform": "微博", "title": "维护公告",
-         "content": "服务器崩了维护两小时，补偿两根蜡烛太少", "url": ""},
-        {"platform": "B站", "title": "光遇联名",
-         "content": "光遇x小王子联名太美但限定斗篷贵了", "url": ""},
+        {"platform": "微博", "title": "新品发布体验",
+         "content": "新品的设计太棒了，包装精致质感满满，超出预期", "url": ""},
+        {"platform": "小红书", "title": "品牌活动分享",
+         "content": "参加了品牌线下快闪活动，互动体验非常好，推荐大家去", "url": ""},
+        {"platform": "B站", "title": "新手入门教程",
+         "content": "新手必看！手把手教你上手这款产品的所有功能", "url": ""},
+        {"platform": "抖音", "title": "用户体验反馈",
+         "content": "APP偶尔闪退，加载速度也有点慢，希望官方尽快优化", "url": ""},
+        {"platform": "知乎", "title": "产品深度评测",
+         "content": "价格偏高但品质不错，性价比见仁见智，老用户优惠太少", "url": ""},
+        {"platform": "快手", "title": "开箱测评",
+         "content": "收到新品开箱！包装设计很用心，产品质感一流", "url": ""},
+        {"platform": "微博", "title": "售后服务反馈",
+         "content": "客服响应慢，售后流程复杂，希望改进服务体验", "url": ""},
+        {"platform": "B站", "title": "品牌联名评价",
+         "content": "这次跨界联名设计很好看，但限定款定价偏高", "url": ""},
     ]
 
 
@@ -449,8 +449,8 @@ def collect_posts(profile: dict, browser_posts_path: str | None = None,
     target_platforms = platforms or [p for p in PLATFORMS_DEEP if p in PLATFORM_SEARCH_DISPATCH]
 
     if not JOA_TOKEN:
-        if profile.get("id") == "sky-weekly":
-            log.error("JOA_TOKEN 未设置，光遇周报需真实采集，不生成报告")
+        if profile.get("id") == "brand-weekly":
+            log.error("JOA_TOKEN 未设置，品牌周报需真实采集，不生成报告")
             return []
         log.warning("JOA_TOKEN 未设置 — 使用模拟数据")
         return _mock_posts()
@@ -458,7 +458,7 @@ def collect_posts(profile: dict, browser_posts_path: str | None = None,
     log.info("=== 采集窗口: %s ~ %s (报告: %s) ===", start_s, end_s, profile["title"])
     log.info("目标平台: %s", target_platforms)
     all_raw: list[dict] = []
-    skip_phase1 = profile.get("id") == "sky-weekly" or platforms is not None
+    skip_phase1 = profile.get("id") == "brand-weekly" or platforms is not None
 
     if not skip_phase1:
         log.info("Phase 1: 统一搜索 (%d 关键词 × 最多 %d 页)...",
@@ -540,6 +540,6 @@ def collect_posts(profile: dict, browser_posts_path: str | None = None,
     except OSError:
         pass
 
-    if not posts and profile.get("id") == "sky-weekly":
+    if not posts and profile.get("id") == "brand-weekly":
         return []
     return posts if posts else _mock_posts()

@@ -19,3 +19,7 @@ PyGithub>=2.1.0
 feedparser>=6.0.0
 beautifulsoup4>=4.12.0
 lxml>=5.0.0
+
+# conductor
+volcengine-python-sdk[ark]>=5.0.0   # Seedance 视频 + Seedream 图片生成
+# playwright>=1.40.0                # 取消注释启用自动发布（使用系统 Chrome，无需 playwright install）

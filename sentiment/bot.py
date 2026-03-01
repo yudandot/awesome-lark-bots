@@ -94,14 +94,10 @@ _PLATFORM_ALIASES.update({
 })
 
 _COMMAND_MAP = {
-    "周报": "sky-weekly", "/周报": "sky-weekly", "光遇周报": "sky-weekly",
-    "月报": "jenova-month", "/月报": "jenova-month",
-    "jenova月报": "jenova-month", "陈星汉月报": "jenova-month",
+    "周报": "brand-weekly", "/周报": "brand-weekly",
 }
 _BIWEEK_MAP = {
-    "thatskyshop": "thatskyshop-biweek", "shop": "thatskyshop-biweek",
-    "光之子": "guangzhizi-biweek", "友友会": "guangzhizi-biweek",
-    "guangzhizi": "guangzhizi-biweek",
+    "双周报": "sub-brand-biweek",
 }
 
 # ── 引导文案 ─────────────────────────────────────────────────
@@ -112,8 +108,8 @@ def _welcome() -> dict:
         "我可以从 **微博、抖音、小红书、B站** 等 15 个平台采集社交媒体数据，"
         "生成可供 AI 深度分析的结构化文件。",
         examples=[
-            "周报 — 一键生成光遇舆情周报",
-            "采集 光遇 @微博 @B站 7天 — 自定义采集",
+            "周报 — 一键生成舆情周报",
+            "采集 我的品牌 @微博 @B站 7天 — 自定义采集",
             "平台 — 查看所有可用平台",
         ],
         hints=["加「+分析」可附 AI 分析报告", "发送「帮助」查看完整说明"],
@@ -123,15 +119,13 @@ def _welcome() -> dict:
 def _help() -> dict:
     return help_card("舆情机器人", [
         ("快捷报告（一键使用）",
-         "> **周报** — 光遇舆情周报（7天）\n"
-         "> **双周报 thatskyshop** — thatskyshop 双周报（14天）\n"
-         "> **双周报 光之子** — 光之子友友会双周报（14天）\n"
-         "> **月报** — jenova 陈星汉月报（30天）"),
+         "> **周报** — 默认品牌舆情周报（7天）\n"
+         "> **双周报** — 子品牌双周报（14天）"),
         ("自定义采集",
          "格式：`采集 关键词 @平台 天数 条数`\n\n"
          "> 采集 原神 崩坏星穹铁道 @微博 @B站 7天\n"
          "> 采集 iPhone17 @全平台 3天 200条\n"
-         "> 光遇 @抖音 @小红书 14天 50条\n\n"
+         "> 我的品牌 @抖音 @小红书 14天 50条\n\n"
          "关键词空格分隔 · 不填平台默认国内6平台 · @全平台=15个"),
         ("可选项",
          "指令末尾加 **+分析** → 同时用 AI 生成分析报告\n"
@@ -146,8 +140,8 @@ def _unrecognized() -> dict:
     return action_card(
         "🤔 没有理解你的意思",
         "**试试这样说：**\n"
-        "> 周报 — 生成光遇舆情周报\n"
-        "> 采集 光遇 @微博 @B站 7天 — 自定义采集\n"
+        "> 周报 — 生成舆情周报\n"
+        "> 采集 我的品牌 @微博 @B站 7天 — 自定义采集\n"
         "> 帮助 — 查看完整说明",
         hints=["发「平台」查看可用平台列表"],
         color="orange",
@@ -175,7 +169,7 @@ def _platforms_list() -> str:
     lines.append("  @全平台 = 采集以上所有")
     lines.append("  不指定 = 默认国内6平台")
     lines.append("")
-    lines.append("💡 试试: 采集 光遇 @微博 @抖音 @小红书 7天")
+    lines.append("💡 试试: 采集 我的品牌 @微博 @抖音 @小红书 7天")
     return "\n".join(lines)
 
 
@@ -206,7 +200,7 @@ def _parse_command(text: str):
     返回 (command_type, params, with_ai)：
       command_type: 指令类型
         "preset"    → 预设快捷报告（如「周报」）
-        "custom"    → 自定义采集（如「采集 光遇 @微博 7天」）
+        "custom"    → 自定义采集（如「采集 我的品牌 @微博 7天」）
         "status"    → 查看配置状态
         "platforms" → 查看可用平台
         "help"      → 帮助
@@ -236,7 +230,7 @@ def _parse_command(text: str):
         for key, pid in _BIWEEK_MAP.items():
             if key in rest:
                 return "preset", {"profile_id": pid}, with_ai
-        return "preset", {"profile_id": "thatskyshop-biweek"}, with_ai
+        return "preset", {"profile_id": "sub-brand-biweek"}, with_ai
 
     has_collect_prefix = lower.startswith(("采集 ", "/采集 ", "采集:", "搜索 ", "/搜索 "))
     if has_collect_prefix:
@@ -372,7 +366,7 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                 _reply_c(action_card("🔧 配置状态", _config_status(), color="blue"))
                 return
             if cmd_type == "platforms":
-                _reply_c(action_card("📋 可用平台", _platforms_list(), hints=["例：采集 光遇 @微博 @抖音 7天"], color="blue"))
+                _reply_c(action_card("📋 可用平台", _platforms_list(), hints=["例：采集 我的品牌 @微博 @抖音 7天"], color="blue"))
                 return
             if cmd_type is None:
                 _reply_c(_unrecognized())

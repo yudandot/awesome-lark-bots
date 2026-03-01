@@ -2,13 +2,10 @@
 """
 早知天下事飞书机器人 — 定时推送 + 手动触发。
 
-功能：
-  1. 每天早上 8:00（北京时间）自动生成日报并推送到飞书群
-  2. 在飞书聊天中发消息手动触发
-
-推送方式（按优先级）：
-  - Webhook 消息卡片 → 推送到飞书群（支持 Markdown，推荐）
-  - 直接消息 → 推送给指定用户
+推送策略：
+  日报会被拆分成多个逻辑段（华人圈/越南/亚太/欧美/全球联动），
+  每段作为独立的飞书消息卡片发送，绕开单条消息的字数限制。
+  每张卡片内部的 Markdown 也会按 element 上限自动拆分。
 
 运行：python3 -m newsbot
 """
@@ -16,11 +13,10 @@
 import json
 import os
 import random
-import sys
 import threading
 import time
 import traceback
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from typing import Optional
 
 try:
@@ -48,6 +44,12 @@ NEWSBOT_PUSH_OPEN_ID = os.getenv("NEWSBOT_PUSH_OPEN_ID", "").strip()
 FEISHU_API_BASE = "https://open.feishu.cn/open-apis"
 _token_cache: Optional[str] = None
 _token_expire_at: float = 0.0
+
+# 飞书卡片限制
+MAX_CARD_ELEMENT_LEN = 3800          # 单个 markdown element 内容上限
+MAX_CARD_ELEMENTS = 50               # 单张卡片最大 element 数
+MAX_CARD_TOTAL_CHARS = 9000           # 单张卡片总字符安全上限（中文3字节/字 + JSON开销 ≈ 30KB）
+CARD_SEND_INTERVAL = 1.5             # 多卡片之间发送间隔（秒）
 
 
 # ── 飞书 API ────────────────────────────────────────────────
@@ -102,46 +104,207 @@ def _send_text(open_id: str, text: str) -> None:
         log.warning("发送异常: %s", e)
 
 
-# ── Webhook 推送（支持长文消息卡片） ─────────────────────────
+def _send_card_via_api(open_id: str, card: dict) -> bool:
+    """通过飞书 API 发送消息卡片给指定用户。"""
+    url = f"{FEISHU_API_BASE}/im/v1/messages?receive_id_type=open_id"
+    body = {
+        "receive_id": open_id,
+        "msg_type": "interactive",
+        "content": json.dumps(card, ensure_ascii=False),
+    }
+    try:
+        r = _requests.post(url, json=body, headers=_headers(), timeout=15)
+        d = r.json()
+        if d.get("code") == 0:
+            return True
+        log.warning("API 卡片发送失败: %s", d.get("msg"))
+    except Exception as e:
+        log.warning("API 卡片发送异常: %s", e)
+    return False
 
-MAX_CARD_SECTION_LEN = 3500
+
+def _reply_card(message_id: str, card: dict) -> bool:
+    """回复一张消息卡片。"""
+    url = f"{FEISHU_API_BASE}/im/v1/messages/{message_id}/reply"
+    body = {
+        "msg_type": "interactive",
+        "content": json.dumps(card, ensure_ascii=False),
+    }
+    try:
+        r = _requests.post(url, json=body, headers=_headers(), timeout=15)
+        d = r.json()
+        if d.get("code") == 0:
+            return True
+        log.warning("回复卡片失败: %s", d.get("msg"))
+    except Exception as e:
+        log.warning("回复卡片异常: %s", e)
+    return False
+
+
+# ── 卡片构建 ─────────────────────────────────────────────────
+
+def _split_markdown_by_lines(text: str, max_len: int) -> list[str]:
+    """按行边界拆分长文本，尽量在空行或标题处断开。"""
+    lines = text.split("\n")
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+
+    for line in lines:
+        line_len = len(line) + 1
+        if current_len + line_len > max_len and current:
+            chunks.append("\n".join(current))
+            current = []
+            current_len = 0
+        current.append(line)
+        current_len += line_len
+
+    if current:
+        chunks.append("\n".join(current))
+    return chunks
+
+
+def _build_card(title: str, markdown_body: str, color: str = "blue",
+                subtitle: str = "") -> dict:
+    """
+    构建单张飞书消息卡片。
+    自动将长 Markdown 拆分成多个 element。
+    """
+    elements: list[dict] = []
+
+    if subtitle:
+        elements.append({
+            "tag": "markdown",
+            "content": f"*{subtitle}*",
+        })
+        elements.append({"tag": "hr"})
+
+    sections = markdown_body.split("\n---\n")
+    for section in sections:
+        section = section.strip()
+        if not section:
+            continue
+
+        if len(section) <= MAX_CARD_ELEMENT_LEN:
+            elements.append({"tag": "markdown", "content": section})
+        else:
+            chunks = _split_markdown_by_lines(section, MAX_CARD_ELEMENT_LEN)
+            for chunk in chunks:
+                elements.append({"tag": "markdown", "content": chunk})
+        elements.append({"tag": "hr"})
+
+    if elements and elements[-1].get("tag") == "hr":
+        elements.pop()
+
+    if not elements:
+        elements = [{"tag": "markdown", "content": markdown_body[:MAX_CARD_ELEMENT_LEN]}]
+
+    if len(elements) > MAX_CARD_ELEMENTS:
+        elements = elements[:MAX_CARD_ELEMENTS]
+
+    return {
+        "header": {
+            "title": {"tag": "plain_text", "content": title},
+            "template": color,
+        },
+        "elements": elements,
+    }
+
+
+def _split_report_into_cards(report: str, date_str: str) -> list[dict]:
+    """
+    把完整日报拆分成多张卡片。
+    按「## 」二级标题作为天然分割点，每张卡片一个大段。
+    """
+    import re
+    # 按二级标题拆分
+    parts = re.split(r'\n(?=## )', report)
+
+    # 第一段是标题头（# 早知天下事...），单独处理
+    header = ""
+    body_parts: list[tuple[str, str]] = []
+
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        if part.startswith("# "):
+            header = part
+            continue
+
+        title_match = re.match(r'^## (.+?)$', part, re.MULTILINE)
+        section_title = title_match.group(1).strip() if title_match else "续"
+        body_parts.append((section_title, part))
+
+    cards: list[dict] = []
+    base_title = f"📰 早知天下事 · {date_str}"
+
+    SECTION_COLORS = {
+        "华人圈": "blue",
+        "越南": "green",
+        "亚太": "orange",
+        "欧美": "purple",
+        "全球热点": "turquoise",
+        "全球联动": "red",
+    }
+
+    if not body_parts:
+        cards.append(_build_card(base_title, report, "blue"))
+        return cards
+
+    total = len(body_parts)
+    for idx, (section_title, content) in enumerate(body_parts, 1):
+        color = "blue"
+        for keyword, c in SECTION_COLORS.items():
+            if keyword in section_title:
+                color = c
+                break
+
+        card_title = f"{base_title}  [{idx}/{total}]"
+        subtitle = ""
+        if idx == 1 and header:
+            subtitle = header.replace("# ", "").strip()
+
+        content_stripped = content.strip().removeprefix("---").strip()
+
+        if len(content_stripped) > MAX_CARD_TOTAL_CHARS:
+            sub_chunks = _split_markdown_by_lines(content_stripped, MAX_CARD_TOTAL_CHARS)
+            for ci, chunk in enumerate(sub_chunks):
+                sub_title = f"{base_title}  [{idx}.{ci+1}/{total}]"
+                cards.append(_build_card(
+                    sub_title, chunk, color,
+                    subtitle=section_title if ci == 0 else f"{section_title}（续）",
+                ))
+        else:
+            cards.append(_build_card(card_title, content_stripped, color, subtitle=section_title))
+
+    return cards
+
+
+# ── Webhook 推送 ─────────────────────────────────────────────
+
 MAX_WEBHOOK_RETRIES = 2
 
 
-def _webhook_send_card(title: str, markdown_body: str, color: str = "blue") -> bool:
-    """
-    通过 Webhook 发送消息卡片到飞书群。
-    自动把长文拆分成多个 card element。
-    """
+def _webhook_send_card(card: dict, title_for_log: str = "") -> bool:
+    """通过 Webhook 发送单张消息卡片。"""
     webhook_url = NEWSBOT_FEISHU_WEBHOOK
     if not webhook_url:
-        log.warning("NEWSBOT_FEISHU_WEBHOOK 未设置，跳过 Webhook 推送")
         return False
 
-    elements = _build_card_elements(markdown_body)
-    card_body = {
-        "msg_type": "interactive",
-        "card": {
-            "header": {
-                "title": {"tag": "plain_text", "content": title},
-                "template": color,
-            },
-            "elements": elements,
-        },
-    }
+    body = {"msg_type": "interactive", "card": card}
 
     for attempt in range(MAX_WEBHOOK_RETRIES + 1):
         try:
             r = _requests.post(
-                webhook_url,
-                json=card_body,
+                webhook_url, json=body,
                 headers={"Content-Type": "application/json"},
                 timeout=15,
             )
             if r.ok:
                 resp = r.json()
                 if resp.get("code") == 0 or resp.get("StatusCode") == 0:
-                    log.info("Webhook 推送成功: %s", title)
+                    log.info("Webhook 卡片推送成功: %s", title_for_log)
                     return True
                 log.warning("Webhook 返回异常: %s", resp)
             else:
@@ -159,106 +322,77 @@ def _webhook_send_card(title: str, markdown_body: str, color: str = "blue") -> b
     return False
 
 
-def _build_card_elements(markdown_body: str) -> list[dict]:
-    """把长 Markdown 拆分成多个 card element（每段不超过限长）。"""
-    sections = markdown_body.split("\n---\n")
-    elements: list[dict] = []
-    for section in sections:
-        section = section.strip()
-        if not section:
-            continue
-        if len(section) <= MAX_CARD_SECTION_LEN:
-            elements.append({"tag": "markdown", "content": section})
-            elements.append({"tag": "hr"})
-        else:
-            chunks = _split_markdown(section, MAX_CARD_SECTION_LEN)
-            for chunk in chunks:
-                elements.append({"tag": "markdown", "content": chunk})
-            elements.append({"tag": "hr"})
-    if elements and elements[-1].get("tag") == "hr":
-        elements.pop()
-    if not elements:
-        elements = [{"tag": "markdown", "content": markdown_body[:MAX_CARD_SECTION_LEN]}]
-    return elements
-
-
-def _split_markdown(text: str, max_len: int) -> list[str]:
-    """按段落边界拆分长文本。"""
-    lines = text.split("\n")
-    chunks: list[str] = []
-    current: list[str] = []
-    current_len = 0
-    for line in lines:
-        if current_len + len(line) + 1 > max_len and current:
-            chunks.append("\n".join(current))
-            current = []
-            current_len = 0
-        current.append(line)
-        current_len += len(line) + 1
-    if current:
-        chunks.append("\n".join(current))
-    return chunks
-
-
 def _webhook_send_text(text: str) -> bool:
-    """Webhook 发送纯文本（卡片放不下时的回退方案）。"""
     webhook_url = NEWSBOT_FEISHU_WEBHOOK
     if not webhook_url:
         return False
     body = {"msg_type": "text", "content": {"text": text}}
     try:
-        r = _requests.post(webhook_url, json=body, headers={"Content-Type": "application/json"}, timeout=10)
+        r = _requests.post(webhook_url, json=body,
+                           headers={"Content-Type": "application/json"}, timeout=10)
         return r.ok
     except Exception:
         return False
 
 
-# ── 推送日报 ────────────────────────────────────────────────
+# ── 推送日报（核心逻辑） ──────────────────────────────────────
 
 def push_report(report: str, date_str: str) -> None:
     """
     推送日报到所有配置的渠道。
-    优先 Webhook 卡片 → 回退纯文本 → 直接消息。
+    核心策略：按二级标题拆分为多张卡片，逐条发送。
     """
-    title = f"📰 早知天下事 · {date_str}"
+    cards = _split_report_into_cards(report, date_str)
+    log.info("日报拆分为 %d 张卡片", len(cards))
 
+    # Webhook 推群
     if NEWSBOT_FEISHU_WEBHOOK:
-        if len(report) > 30000:
-            parts = _split_report_into_parts(report)
-            for i, part in enumerate(parts, 1):
-                part_title = f"{title} ({i}/{len(parts)})"
-                ok = _webhook_send_card(part_title, part, color="blue")
-                if not ok:
-                    _webhook_send_text(f"{part_title}\n\n{part[:3000]}")
-                time.sleep(1)
-        else:
-            ok = _webhook_send_card(title, report, color="blue")
+        for i, card in enumerate(cards, 1):
+            title = card.get("header", {}).get("title", {}).get("content", f"卡片{i}")
+            ok = _webhook_send_card(card, title_for_log=title)
             if not ok:
-                _webhook_send_text(f"{title}\n\n{report[:3500]}")
+                # 降级：纯文本
+                _webhook_send_text(f"⚠️ 卡片 {i}/{len(cards)} 发送失败，请查看文件版日报")
+            if i < len(cards):
+                time.sleep(CARD_SEND_INTERVAL)
 
+    # API 推用户
     if NEWSBOT_PUSH_OPEN_ID:
-        preview = report[:3500] if len(report) > 4000 else report
-        _send_text(NEWSBOT_PUSH_OPEN_ID, f"{title}\n\n{preview}")
+        for i, card in enumerate(cards, 1):
+            ok = _send_card_via_api(NEWSBOT_PUSH_OPEN_ID, card)
+            if not ok:
+                preview = report[:3000] if i == 1 else f"（第{i}段发送失败）"
+                _send_text(NEWSBOT_PUSH_OPEN_ID, preview)
+            if i < len(cards):
+                time.sleep(CARD_SEND_INTERVAL)
 
 
-def _split_report_into_parts(report: str) -> list[str]:
-    """按 --- 分隔符把日报拆成多个独立部分（华人圈/越南/亚太/欧美）。"""
-    major_sections = report.split("\n---\n")
-    parts: list[str] = []
-    current_part: list[str] = []
-    current_len = 0
+def push_cards_to_chat(message_id: str, open_id: Optional[str],
+                       report: str, date_str: str) -> None:
+    """
+    在聊天中推送日报卡片（手动触发时使用）。
+    第一张卡片用 reply，后续用 send。
+    """
+    cards = _split_report_into_cards(report, date_str)
+    log.info("聊天回复: 日报拆分为 %d 张卡片", len(cards))
 
-    for section in major_sections:
-        if current_len + len(section) > 25000 and current_part:
-            parts.append("\n---\n".join(current_part))
-            current_part = []
-            current_len = 0
-        current_part.append(section)
-        current_len += len(section)
+    for i, card in enumerate(cards, 1):
+        if i == 1:
+            ok = _reply_card(message_id, card)
+        elif open_id:
+            ok = _send_card_via_api(open_id, card)
+        else:
+            ok = False
 
-    if current_part:
-        parts.append("\n---\n".join(current_part))
-    return parts if parts else [report]
+        if not ok:
+            fallback = f"⚠️ 第 {i}/{len(cards)} 段发送失败"
+            if open_id:
+                _send_text(open_id, fallback)
+            else:
+                _reply_text(message_id, fallback)
+
+        if i < len(cards):
+            time.sleep(CARD_SEND_INTERVAL)
 
 
 # ── 定时调度 ────────────────────────────────────────────────
@@ -267,7 +401,6 @@ _schedule_running = False
 
 
 def _daily_job():
-    """每日定时任务：生成日报并推送。"""
     log.info("=" * 60)
     log.info("定时任务启动: 早知天下事日报")
     log.info("=" * 60)
@@ -284,10 +417,6 @@ def _daily_job():
 
 
 def _scheduler_loop():
-    """
-    简单的定时器循环：每分钟检查一次，到达目标时间时执行任务。
-    避免引入额外依赖（不依赖 schedule / APScheduler）。
-    """
     global _schedule_running
     _schedule_running = True
     last_run_date: Optional[str] = None
@@ -303,15 +432,16 @@ def _scheduler_loop():
                     and now.minute == SCHEDULE_MINUTE
                     and today_str != last_run_date):
                 last_run_date = today_str
-                log.info("到达推送时间 %02d:%02d，启动日报生成...", SCHEDULE_HOUR, SCHEDULE_MINUTE)
-                threading.Thread(target=_daily_job, daemon=True, name="daily-digest").start()
+                log.info("到达推送时间 %02d:%02d，启动日报生成...",
+                         SCHEDULE_HOUR, SCHEDULE_MINUTE)
+                threading.Thread(target=_daily_job, daemon=True,
+                                 name="daily-digest").start()
         except Exception as e:
             log.error("调度器异常: %s", e)
         time.sleep(30)
 
 
 def start_scheduler():
-    """在后台线程启动定时调度。"""
     t = threading.Thread(target=_scheduler_loop, daemon=True, name="scheduler")
     t.start()
     return t
@@ -319,48 +449,50 @@ def start_scheduler():
 
 # ── 消息处理 ────────────────────────────────────────────────
 
-WELCOME_TEXT = """👋 你好！我是「早知天下事」热点日报机器人。
+WELCOME_TEXT = """👋 你好！我是「早知天下事」全球热点日报机器人。
 
-覆盖 30+ 数据源，每天早上 8:00 自动推送。
+📊 覆盖 20+ 数据源：
+  🇨🇳 微博·百度·知乎·B站·抖音·头条·微信·澎湃
+  🇹🇼🇭🇰 PTT·LIHKG·Google News 台湾/香港
+  🌐 Reddit·Hacker News·Google News
+  🇻🇳🇯🇵🇰🇷🇮🇳🇮🇩 VnExpress·NHK·Yonhap·TOI 等
+  🇺🇸🇬🇧🇩🇪🇫🇷 CNN·BBC·Guardian·Spiegel 等
 
-📋 可用指令：
-  ➡️「日报」— 立即生成完整热点日报
-  ➡️「快报」— 只采集原始热榜（更快，不含 AI 分析）
-  ➡️「华人圈」— 只生成华人圈部分
-  ➡️「国际」— 只生成国际部分
-  ➡️「帮助」— 查看详细说明
+📋 指令：
+  「日报」— 完整AI深度分析日报（~5分钟）
+  「快报」— 只采集原始热榜（~1分钟）
+  「华人圈」/「国际」— 分区域生成
+  「帮助」— 详细说明
 
-⏰ 每天 8:00 自动推送，也可随时手动触发。"""
+⏰ 每天 8:00 自动推送"""
 
 HELP_TEXT = """📖 早知天下事 — 使用说明
 
-━━━ 日报生成 ━━━
-  日报 / 今日热点 / 新闻    完整全球热点日报（~3-5分钟）
+━━━ 指令 ━━━
+  日报 / 今日热点 / 新闻    完整 AI 深度分析日报（~5分钟）
   快报                      只采集原始热榜（~1分钟）
   华人圈                    只生成华人圈部分
   国际                      只生成国际部分
+  帮助 / help               查看本说明
 
-━━━ 覆盖 30+ 数据源 ━━━
-  🇨🇳 微博 · 百度 · 知乎 · B站 · 小红书 · 抖音 · 快手
-  🇹🇼 PTT · Dcard
-  🇭🇰 LIHKG
-  🌐 Reddit · Twitter/X
-  🇻🇳 VnExpress · Tuổi Trẻ · Dân Trí · Kenh14
-  🇯🇵 NHK · Japan Times · Mainichi
-  🇰🇷 Korea Herald · Yonhap
-  🇮🇳 TOI · NDTV
-  🇮🇩 Detik · Kompas
-  🇺🇸 CNN · NPR · AP News
-  🇬🇧 BBC · Guardian
-  🇩🇪 Spiegel · Zeit
-  🇫🇷 Le Monde · Le Figaro
+━━━ 20+ 数据源 ━━━
+  中国大陆  微博·百度·知乎·B站·抖音·今日头条·微信热文·澎湃
+  台湾/香港  PTT·LIHKG·Google News 台湾/香港
+  全球社区  Reddit·Hacker News·Google News Global
+  越南      VnExpress·Tuổi Trẻ·Dân Trí
+  日韩      NHK·Japan Times·Mainichi·Yonhap
+  印度      TOI·NDTV
+  印尼      Google News Indonesia
+  欧美      CNN·NPR·BBC·Guardian·Spiegel·Zeit·Le Monde·Le Figaro
 
-⏰ 每天 8:00（北京时间）自动推送到群
+━━━ AI 分析维度 ━━━
+  • 跨平台叙事差异比较
+  • 四地（内地/台湾/香港/海外）舆论温度计
+  • 信息盲区与异常信号检测
+  • 全球联动分析 & 信息差地图
+  • 48小时风向预判
 
-━━━ CLI 运行 ━━━
-  python3 -m newsbot.run
-  python3 -m newsbot.run --region cn
-  python3 -m newsbot.run --no-ai"""
+⏰ 每天 8:00（北京时间）自动推送"""
 
 _running_lock = threading.Lock()
 _running_users: dict = {}
@@ -442,22 +574,21 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
 
                 _respond(
                     f"🚀 开始生成 {region_hint} 热点日报{ai_hint}\n\n"
-                    f"⏳ 预计 {'3-5 分钟' if with_ai else '1 分钟'}，完成后发送给你。"
+                    f"⏳ 预计 {'3-5 分钟' if with_ai else '1 分钟'}，"
+                    f"完成后以卡片形式分段发送。"
                 )
 
                 report, path = generate_report(regions=regions, with_ai=with_ai)
                 now = datetime.now(BEIJING)
                 date_str = now.strftime("%Y年%m月%d日")
 
-                if NEWSBOT_FEISHU_WEBHOOK:
-                    push_report(report, date_str)
-                    _respond(f"✅ 日报已生成并推送到群！\n📄 文件: {path.name}\n📊 共 {len(report)} 字")
-                else:
-                    if len(report) > 4000:
-                        preview = report[:3500] + f"\n\n... 全文共 {len(report)} 字，已保存到 {path.name}"
-                    else:
-                        preview = report
-                    _respond(f"✅ 日报已生成！\n\n{preview}")
+                push_cards_to_chat(message_id, open_id, report, date_str)
+
+                _respond(
+                    f"✅ 日报已完成！\n"
+                    f"📄 文件: {path.name}\n"
+                    f"📊 共 {len(report)} 字"
+                )
             finally:
                 with _running_lock:
                     _running_users.pop(user_key, None)
@@ -496,8 +627,7 @@ def main():
     app_secret = NEWSBOT_FEISHU_APP_SECRET.strip()
     if not app_id or not app_secret:
         raise SystemExit(
-            "请设置环境变量 NEWSBOT_FEISHU_APP_ID 和 NEWSBOT_FEISHU_APP_SECRET\n"
-            "（或复用 FEISHU_APP_ID / FEISHU_APP_SECRET）"
+            "请设置环境变量 NEWSBOT_FEISHU_APP_ID 和 NEWSBOT_FEISHU_APP_SECRET"
         )
 
     print("=" * 60)
@@ -509,10 +639,8 @@ def main():
     print(f"  推送用户: {NEWSBOT_PUSH_OPEN_ID or '未配置（通过 Webhook 推群）'}")
     print("=" * 60)
 
-    # 启动定时调度
     start_scheduler()
 
-    # 启动飞书长连接
     delay = RECONNECT_INITIAL_DELAY
     attempt = 0
     while True:
