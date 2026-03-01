@@ -47,7 +47,9 @@ def generate_reply(comment_text: str, brand: str = "", context: str = "") -> str
     prompt += "\n\n请生成一条合适的回复。"
 
     try:
-        return chat_completion(provider="deepseek", system=REPLY_SYSTEM, user=prompt, temperature=0.8)
+        from core.skill_router import enrich_prompt
+        enriched_system = enrich_prompt(REPLY_SYSTEM, user_text=prompt, bot_type="conductor")
+        return chat_completion(provider="deepseek", system=enriched_system, user=prompt, temperature=0.8)
     except Exception as e:
         log.error("生成回复失败: %s", e)
         return ""

@@ -360,6 +360,12 @@ awesome-lark-bots/
 │   └── push_target.py        #   推送接收人管理
 │
 ├── prompts.json              # 脑暴「坚果五仁」角色配置
+├── skills/                    # 共享技能库（品牌/营销知识，自动路由注入 prompt）
+│   ├── __init__.py            #   Skill 基类 + 注册表 + 自动发现
+│   ├── brand.py               #   品牌知识技能
+│   ├── marketing.py           #   营销方法论技能
+│   └── __main__.py            #   CLI: python -m skills list / test / activate
+│
 ├── CN-MKT-Skills/            # 营销技能知识库（规划机器人可参考）
 ├── briefs/                   # 脑暴主题 brief 文件
 ├── runs/                     # 运行记录输出（自动生成）
@@ -386,6 +392,34 @@ awesome-lark-bots/
 | **Kimi** | 长文本理解 | 脑暴中的素材角色、最终交付物生成 |
 
 > 这只是我们目前在尝试的组合。你完全可以换成 OpenAI、Claude、通义千问、智谱 GLM 或任何兼容 OpenAI 协议的模型——改 `.env` 里的三个变量（`*_API_KEY`、`*_BASE_URL`、`*_MODEL`）就行。
+
+---
+
+## 技能系统 (Skills)
+
+所有机器人共享一套**可插拔的技能库**（`skills/`），通过 `core/skill_router.py` 自动路由——bot 只需一行代码即可获得领域知识增强：
+
+```python
+from core.skill_router import enrich_prompt
+
+system = enrich_prompt("你是内容助手...", user_text=msg, bot_type="creative")
+```
+
+路由器会根据**用户消息关键词**和**bot 类型**自动判断需要加载哪些技能，将知识追加到 system prompt 中。
+
+**内置技能：**
+
+| 技能 | 说明 | 自动激活条件 |
+|------|------|-------------|
+| `brand` | 品牌视觉风格、调性、场景 | creative / conductor，或消息含"品牌"等关键词 |
+| `marketing` | 营销方法论、策略框架 | planner / conductor，或消息含"营销""推广"等关键词 |
+
+**扩展新技能**：在 `skills/` 下新建 `.py` 文件，继承 `Skill` 基类并 `register()` 即可，详见 [`skills/README.md`](skills/README.md)。
+
+```bash
+python -m skills list                      # 列出所有技能
+python -m skills activate "帮我做品牌推广"   # 查看哪些技能会被激活
+```
 
 ---
 
@@ -538,6 +572,29 @@ The project calls LLMs through `core/llm.py` using the OpenAI-compatible API pro
 - `*_MODEL` — the model name
 
 Currently configured with DeepSeek, Doubao, and Kimi as a starting point, but OpenAI, Claude, Qwen, GLM, and others all work.
+
+### Skills System
+
+All bots share a **plug-and-play skill library** (`skills/`), auto-routed via `core/skill_router.py` — one line of code gives any bot domain-knowledge augmentation:
+
+```python
+from core.skill_router import enrich_prompt
+system = enrich_prompt("You are a content assistant...", user_text=msg, bot_type="creative")
+```
+
+The router checks **user message keywords** and **bot type** to decide which skills to load, appending domain knowledge to the system prompt.
+
+| Skill | Description | Auto-activates for |
+|-------|-------------|-------------------|
+| `brand` | Brand visual style, tone, scenarios | creative / conductor bots, or messages mentioning "brand" |
+| `marketing` | Marketing methodology & frameworks | planner / conductor bots, or messages mentioning "marketing" |
+
+Add custom skills by dropping a `.py` file in `skills/` — see [`skills/README.md`](skills/README.md).
+
+```bash
+python -m skills list                          # list all skills
+python -m skills activate "brand promotion"    # see which skills activate
+```
 
 ### Contributing
 

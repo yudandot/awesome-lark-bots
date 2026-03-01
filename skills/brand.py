@@ -48,9 +48,19 @@ def _load_yaml(path: Path) -> dict:
 class BrandSkill(Skill):
     name = "brand"
     description = "品牌知识库 — 提供品牌视觉风格、原则、场景、角色、文案调性等"
+    trigger_keywords = ["品牌", "brand", "视觉", "调性", "风格"]
+    bot_types = ["creative", "conductor"]
 
     def __init__(self, brands_dir: Optional[Path] = None):
         self.brands_dir = brands_dir or BRANDS_DIR
+
+    def should_activate(self, user_text: str, bot_type: str = "", **kwargs) -> bool:
+        if bot_type in self.bot_types:
+            return True
+        lower = user_text.lower()
+        if any(kw.lower() in lower for kw in self.trigger_keywords):
+            return True
+        return self.detect_brand(user_text) is not None
 
     # ── 品牌发现 ──
 

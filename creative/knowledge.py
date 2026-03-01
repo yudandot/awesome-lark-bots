@@ -212,11 +212,12 @@ def brand_to_prompt_section(brand: dict) -> str:
     return _brand_skill.brand_to_prompt(brand)
 
 
-def build_system_prompt(brand: Optional[dict] = None) -> str:
+def build_system_prompt(brand: Optional[dict] = None, user_text: str = "") -> str:
     """
     组合完整的 system prompt。
     - 传入 brand profile 时注入品牌知识
     - 没有时使用通用版本
+    - 通过 skill_router 自动追加其他领域知识
     """
     prompt = CORE_SYSTEM_PROMPT
 
@@ -233,6 +234,12 @@ def build_system_prompt(brand: Optional[dict] = None) -> str:
 推断合适的视觉风格和调性来生成 prompt。
 重要：不要使用系统 prompt 示例中的品牌内容，完全按用户实际提到的品牌创作。
 """
+
+    try:
+        from core.skill_router import enrich_prompt
+        prompt = enrich_prompt(prompt, user_text=user_text, bot_type="creative")
+    except Exception:
+        pass
 
     return prompt
 
@@ -262,11 +269,16 @@ def build_refine_prompt(feedback: str) -> str:
     return f"请根据以下反馈修改 prompt：\n{feedback}\n\n请输出修改后的完整 prompt。"
 
 
-def build_chat_system_prompt(brand: Optional[dict] = None) -> str:
+def build_chat_system_prompt(brand: Optional[dict] = None, user_text: str = "") -> str:
     """讨论模式的 system prompt：注入品牌知识但不输出结构化 prompt。"""
     prompt = CHAT_SYSTEM_PROMPT
     if brand:
         prompt += "\n" + brand_to_prompt_section(brand)
+    try:
+        from core.skill_router import enrich_prompt
+        prompt = enrich_prompt(prompt, user_text=user_text, bot_type="creative")
+    except Exception:
+        pass
     return prompt
 
 

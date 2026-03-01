@@ -140,7 +140,9 @@ Raw topic:
 Background materials:
 {context[:8000] if len(context) > 8000 else context}"""
     try:
-        return chat_completion(provider="deepseek", system=REFINE_SYSTEM, user=user).strip()
+        from core.skill_router import enrich_prompt
+        sys = enrich_prompt(REFINE_SYSTEM, user_text=user, bot_type="brainstorm")
+        return chat_completion(provider="deepseek", system=sys, user=user).strip()
     except Exception:
         return ""
 

@@ -70,7 +70,7 @@ def generate_ideas(
     try:
         from skills import load_context as load_skill_context
         brand_context = load_skill_context("brand", brand_name=brand) if brand else ""
-    except ImportError:
+    except Exception:
         pass
 
     extra = []
@@ -95,7 +95,9 @@ def generate_ideas(
 请产出 5 个有爆款潜力的内容创意。"""
 
     try:
-        raw = chat_completion(provider="deepseek", system=IDEATION_SYSTEM, user=user_prompt, temperature=0.85)
+        from core.skill_router import enrich_prompt
+        enriched_system = enrich_prompt(IDEATION_SYSTEM, user_text=user_prompt, bot_type="conductor")
+        raw = chat_completion(provider="deepseek", system=enriched_system, user=user_prompt, temperature=0.85)
         json_match = re.search(r'\[.*\]', raw, re.DOTALL)
         items = json.loads(json_match.group() if json_match else raw)
 

@@ -41,11 +41,22 @@ class Skill(ABC):
 
     name: str = ""
     description: str = ""
+    trigger_keywords: list[str] = []
+    bot_types: list[str] = []
 
     @abstractmethod
     def get_context(self, **kwargs) -> str:
         """返回可以直接拼入 LLM prompt 的上下文文本。"""
         ...
+
+    def should_activate(self, user_text: str, bot_type: str = "", **kwargs) -> bool:
+        """判断当前上下文是否应该激活此技能。子类可覆写。"""
+        if self.bot_types and bot_type in self.bot_types:
+            return True
+        if self.trigger_keywords:
+            lower = user_text.lower()
+            return any(kw.lower() in lower for kw in self.trigger_keywords)
+        return False
 
     def __repr__(self) -> str:
         return f"<Skill:{self.name}>"

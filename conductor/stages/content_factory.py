@@ -110,7 +110,9 @@ def create_content(
 请为每个平台生成适配的发布文案。"""
 
     try:
-        raw = chat_completion(provider="deepseek", system=COPYWRITING_SYSTEM, user=copy_prompt, temperature=0.7)
+        from core.skill_router import enrich_prompt
+        enriched_system = enrich_prompt(COPYWRITING_SYSTEM, user_text=copy_prompt, bot_type="conductor")
+        raw = chat_completion(provider="deepseek", system=enriched_system, user=copy_prompt, temperature=0.7)
         json_match = re.search(r'\{.*\}', raw, re.DOTALL)
         data = json.loads(json_match.group() if json_match else raw)
 

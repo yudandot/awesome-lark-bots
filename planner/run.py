@@ -57,7 +57,9 @@ def refine_brief(topic: str, context: str) -> str:
         user_msg += f"\n\n{skills[:4000]}"
     user_msg += "\n\n请将上述需求结构化为 Planning Brief。保持原始意图，不要过度解读。使用中文。"
     try:
-        return chat_completion(provider=PROVIDER, system=REFINE_BRIEF_SYSTEM, user=user_msg).strip()
+        from core.skill_router import enrich_prompt
+        sys = enrich_prompt(REFINE_BRIEF_SYSTEM, user_text=user_msg, bot_type="planner")
+        return chat_completion(provider=PROVIDER, system=sys, user=user_msg).strip()
     except Exception:
         return ""
 
@@ -72,13 +74,13 @@ def run_step(step_num: int, topic: str, context: str, previous_outputs: list[tup
     for prev_num, prev_name, prev_output in previous_outputs:
         parts.append(f"--- 第 {prev_num} 步 {prev_name} 的输出 ---\n{prev_output}")
     parts.append(instruction)
-    parts.append(
-        "所有内容使用中文。用 **加粗** 标记关键结论和重点。"
-        "排版要求：结论先行，每段不超过 3 句话，段间空行，用 → 或 - 引导要点。禁止大段不分行的文字墙。"
-        "每句话都必须有信息量——删掉所有「正确但无用」的话。"
-        "风格：像一个判断力极强的朋友在飞书上跟你说话，直接、有态度、不写废话。"
-    )
+    parts.append("如果加载了领域知识/框架 skill，在分析中显式调用。标了「如相关才写」的字段，不相关就跳过。")
     user_msg = "\n\n".join(parts)
+    try:
+        from core.skill_router import enrich_prompt
+        system = enrich_prompt(system, user_text=user_msg, bot_type="planner")
+    except Exception:
+        pass
     return chat_completion(provider=PROVIDER, system=system, user=user_msg).strip()
 
 
@@ -156,10 +158,11 @@ def run_planning(
     print("[最终总结] 生成规划摘要...", flush=True)
     summary_parts = "\n\n".join(f"第 {num} 步 {name}：\n{out}" for num, name, out in previous_outputs)
     summary_system = (
-        "你是一位判断力极强的规划顾问。根据以下规划步骤的输出，生成一份简洁锋利的摘要。"
-        "摘要只写三样东西：1）一句话核心结论（你的判断，不是中性总结）；2）推荐方案及理由（3 句话以内）；3）用户现在就该做的第一件事。"
-        "语气像一个见过很多事的朋友在飞书上跟你说——直接、有态度、不说废话。"
-        "可以用 **加粗** 强调关键词。总长度控制在 200 字以内。使用中文。"
+        "根据规划步骤的输出，生成摘要。只写三样东西："
+        "1）一句话核心结论（你的判断，不是中性总结）；"
+        "2）推荐方案及理由（≤3 句）；"
+        "3）用户现在就该做的第一件事。"
+        "≤200 字。中文。**加粗** 关键词。"
     )
     try:
         summary = chat_completion(

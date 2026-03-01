@@ -459,7 +459,7 @@ def _do_generate(user_key: str, user_input: str) -> str:
         if brand:
             _update_session(user_key, brand=brand)
 
-    system_prompt = build_system_prompt(brand)
+    system_prompt = build_system_prompt(brand, user_text=user_input)
     user_prompt = build_user_prompt(user_input)
 
     result = chat_completion(
@@ -480,7 +480,7 @@ def _do_refine(user_key: str, feedback: str) -> str:
         return ""
 
     brand = session.get("brand")
-    system_prompt = build_system_prompt(brand)
+    system_prompt = build_system_prompt(brand, user_text=feedback)
     refine_msg = build_refine_prompt(feedback)
 
     result = chat_completion(
@@ -511,7 +511,7 @@ def _do_chat(user_key: str, user_input: str) -> str:
     if len(history) > _MAX_CHAT_HISTORY:
         history = history[-_MAX_CHAT_HISTORY:]
 
-    system = build_chat_system_prompt(brand)
+    system = build_chat_system_prompt(brand, user_text=user_input)
     messages = [{"role": "system", "content": system}] + history
 
     result = chat_completion(
@@ -539,7 +539,7 @@ def _do_generate_from_chat(user_key: str) -> str:
     )
 
     brand = session.get("brand")
-    system_prompt = build_system_prompt(brand)
+    system_prompt = build_system_prompt(brand, user_text=chat_summary)
     user_prompt = build_generate_from_chat_prompt(chat_summary)
 
     result = chat_completion(

@@ -38,9 +38,19 @@ MODULES_DIR = SKILLS_DIR / "modules"
 class MarketingSkill(Skill):
     name = "marketing"
     description = "营销技能知识库 — 提供营销方法论、策略框架、行业 SOP 等参考"
+    trigger_keywords = ["营销", "推广", "marketing", "策略", "获客", "运营", "增长"]
+    bot_types = ["planner", "conductor"]
 
     def __init__(self, modules_dir: Optional[Path] = None):
         self.modules_dir = modules_dir or MODULES_DIR
+
+    def should_activate(self, user_text: str, bot_type: str = "", **kwargs) -> bool:
+        if not self.modules_dir.exists():
+            return False
+        if bot_type in self.bot_types:
+            return True
+        lower = user_text.lower()
+        return any(kw.lower() in lower for kw in self.trigger_keywords)
 
     def list_modules(self) -> list[dict]:
         """列出所有可用的知识模块。"""
