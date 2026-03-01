@@ -23,25 +23,35 @@ def _path() -> str:
     return (os.environ.get("MEMO_STORE_PATH") or "").strip() or _DEFAULT_PATH
 
 
-def _load_all() -> List[Dict[str, Any]]:
+def _load_all_unlocked() -> List[Dict[str, Any]]:
+    """读取全部备忘（调用方需持有 _lock）。"""
     p = _path()
+    if not os.path.exists(p):
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        return []
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return []
+
+
+def _save_all_unlocked(items: List[Dict[str, Any]]) -> None:
+    """写入全部备忘（调用方需持有 _lock）。"""
+    p = _path()
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(items, f, ensure_ascii=False, indent=2)
+
+
+def _load_all() -> List[Dict[str, Any]]:
     with _lock:
-        if not os.path.exists(p):
-            os.makedirs(os.path.dirname(p), exist_ok=True)
-            return []
-        try:
-            with open(p, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            return []
+        return _load_all_unlocked()
 
 
 def _save_all(items: List[Dict[str, Any]]) -> None:
-    p = _path()
     with _lock:
-        os.makedirs(os.path.dirname(p), exist_ok=True)
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(items, f, ensure_ascii=False, indent=2)
+        _save_all_unlocked(items)
 
 
 def _normalize_category(cat: Optional[str]) -> str:
@@ -71,9 +81,10 @@ def add_memo(
         "reminder_date": reminder_date or "",
         "category": cat_key or "",
     }
-    items = _load_all()
-    items.append(memo)
-    _save_all(items)
+    with _lock:
+        items = _load_all_unlocked()
+        items.append(memo)
+        _save_all_unlocked(items)
     return memo["id"]
 
 
@@ -104,18 +115,19 @@ def list_memos(
 
 
 def delete_memo_by_index(index_one_based: int, user_open_id: Optional[str] = None) -> tuple[bool, str]:
-    items = _load_all()
-    if user_open_id:
-        items = [m for m in items if m.get("user_open_id") == user_open_id]
-    items.sort(key=lambda m: m.get("created_at", ""), reverse=True)
-    if index_one_based < 1 or index_one_based > len(items):
-        return False, f"序号需在 1～{len(items)} 之间，当前共 {len(items)} 条备忘。"
-    to_remove = items[index_one_based - 1]
-    memo_id = to_remove.get("id")
-    content_preview = (to_remove.get("content") or "")[:20]
-    all_items = _load_all()
-    all_items = [m for m in all_items if m.get("id") != memo_id]
-    _save_all(all_items)
+    with _lock:
+        all_items = _load_all_unlocked()
+        items = list(all_items)
+        if user_open_id:
+            items = [m for m in items if m.get("user_open_id") == user_open_id]
+        items.sort(key=lambda m: m.get("created_at", ""), reverse=True)
+        if index_one_based < 1 or index_one_based > len(items):
+            return False, f"序号需在 1～{len(items)} 之间，当前共 {len(items)} 条备忘。"
+        to_remove = items[index_one_based - 1]
+        memo_id = to_remove.get("id")
+        content_preview = (to_remove.get("content") or "")[:20]
+        all_items = [m for m in all_items if m.get("id") != memo_id]
+        _save_all_unlocked(all_items)
     return True, f"已清除第 {index_one_based} 条备忘：{content_preview}{'…' if len(to_remove.get('content') or '') > 20 else ''}"
 
 
@@ -127,20 +139,21 @@ def set_memo_category_by_index(
     cat_key = _normalize_category(category)
     if not cat_key:
         return False, "分类需为：日常、灵感、要事 之一。"
-    items = _load_all()
-    if user_open_id:
-        items = [m for m in items if m.get("user_open_id") == user_open_id]
-    items.sort(key=lambda m: m.get("created_at", ""), reverse=True)
-    if index_one_based < 1 or index_one_based > len(items):
-        return False, f"序号需在 1～{len(items)} 之间，当前共 {len(items)} 条备忘。"
-    target = items[index_one_based - 1]
-    memo_id = target.get("id")
-    display = MEMO_CATEGORY_DISPLAY.get(cat_key, category)
-    all_items = _load_all()
-    for m in all_items:
-        if m.get("id") == memo_id:
-            m["category"] = cat_key
-            break
-    _save_all(all_items)
+    with _lock:
+        all_items = _load_all_unlocked()
+        items = list(all_items)
+        if user_open_id:
+            items = [m for m in items if m.get("user_open_id") == user_open_id]
+        items.sort(key=lambda m: m.get("created_at", ""), reverse=True)
+        if index_one_based < 1 or index_one_based > len(items):
+            return False, f"序号需在 1～{len(items)} 之间，当前共 {len(items)} 条备忘。"
+        target = items[index_one_based - 1]
+        memo_id = target.get("id")
+        display = MEMO_CATEGORY_DISPLAY.get(cat_key, category)
+        for m in all_items:
+            if m.get("id") == memo_id:
+                m["category"] = cat_key
+                break
+        _save_all_unlocked(all_items)
     content_preview = (target.get("content") or "")[:15]
     return True, f"已把第 {index_one_based} 条标为「{display}」：{content_preview}{'…' if len(target.get('content') or '') > 15 else ''}"

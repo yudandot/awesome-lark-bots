@@ -170,7 +170,7 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
         except Exception as e:
             _log(f"处理异常: {e}\n{traceback.format_exc()}")
             try:
-                reply_message(mid, f"处理出错: {str(e)[:200]}")
+                reply_message(mid, "处理出错，内部错误，请稍后重试")
             except Exception:
                 pass
 
@@ -259,6 +259,7 @@ def _dispatch(mid: str, text: str, uid: Optional[str], user_key: str):
         deep_mode = None
 
     # ── 内容生产（核心功能）：无待选选题时解析本条消息为选题或指令
+    topic_from_pending = topic is not None
     if topic is None:
         with _running_lock:
             if _running.get(user_key):
@@ -291,11 +292,12 @@ def _dispatch(mid: str, text: str, uid: Optional[str], user_key: str):
     if topic is None:
         return
 
-    with _running_lock:
-        if _running.get(user_key):
-            reply_message(mid, "上一个任务还在处理中，请稍等...")
-            return
-        _running[user_key] = True
+    if topic_from_pending:
+        with _running_lock:
+            if _running.get(user_key):
+                reply_message(mid, "上一个任务还在处理中，请稍等...")
+                return
+            _running[user_key] = True
 
     mode_label = "深度模式（脑暴→creative prompt→创作）" if deep_mode else "快速模式（创意+创作）"
     # 默认直接发布；设 CONDUCTOR_AUTO_PUBLISH=false 则只存草稿
@@ -349,7 +351,7 @@ def _dispatch(mid: str, text: str, uid: Optional[str], user_key: str):
 
         except Exception as e:
             _log(f"Pipeline 异常: {e}\n{traceback.format_exc()}")
-            reply_message(mid, f"Pipeline 执行出错: {str(e)[:300]}")
+            reply_message(mid, "Pipeline 执行出错，内部错误，请稍后重试")
         finally:
             with _running_lock:
                 _running.pop(user_key, None)
@@ -510,7 +512,7 @@ def _cmd_auto_publish(mid: str, content_id: str, platform: str):
                     {"text": f"错误：{result.error}"},
                 ], color="red"))
         except Exception as e:
-            reply_message(mid, f"发布出错: {str(e)[:300]}")
+            reply_message(mid, "发布出错，内部错误，请稍后重试")
 
     threading.Thread(target=_do_publish, daemon=True).start()
 
@@ -736,6 +738,8 @@ def _handle_message_read(_data) -> None:
 
 
 def _run_client(app_id: str, app_secret: str) -> None:
+    # SECURITY TODO: 配置飞书事件订阅的 Verification Token 和 Encrypt Key 以启用签名校验
+    # 当前为空字符串，不校验事件来源，生产环境建议配置
     event_handler = (
         EventDispatcherHandler.builder("", "")
         .register_p2_im_message_receive_v1(_handle_message)
@@ -770,6 +774,7 @@ def main():
         print("=" * 60, file=sys.stderr)
         raise SystemExit(1)
 
+    # TODO: 传递凭证应通过配置对象而非修改全局环境变量，同进程多机器人时会冲突
     os.environ["FEISHU_APP_ID"] = app_id
     os.environ["FEISHU_APP_SECRET"] = app_secret
 

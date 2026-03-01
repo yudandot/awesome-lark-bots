@@ -171,7 +171,7 @@ def chat(user_message: str, system_prompt: Optional[str] = None) -> str:
 
     client = OpenAI(
         api_key=api_key,
-        base_url="https://api.deepseek.com",
+        base_url=os.environ.get("DEEPSEEK_BASE_URL", "").strip() or "https://api.deepseek.com",
         timeout=30.0,
     )
     messages = []
@@ -180,7 +180,7 @@ def chat(user_message: str, system_prompt: Optional[str] = None) -> str:
     messages.append({"role": "user", "content": user_message})
 
     response = client.chat.completions.create(
-        model="deepseek-chat",
+        model=os.environ.get("DEEPSEEK_MODEL", "").strip() or "deepseek-chat",
         messages=messages,
         max_tokens=2048,
         temperature=0.3,

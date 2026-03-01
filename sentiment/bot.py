@@ -381,10 +381,13 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                         color="orange",
                     ))
                     return
+                if cmd_type == "preset":
+                    _running_sessions[user_key] = params["profile_id"]
+                elif cmd_type == "custom":
+                    _running_sessions[user_key] = f"自定义: {', '.join(params['keywords'][:3])}"
 
             if cmd_type == "preset":
                 profile_id = params["profile_id"]
-                _running_sessions[user_key] = profile_id
                 from sentiment.config.profiles import get_profile
                 profile = get_profile(profile_id)
                 ai_hint = " + AI分析" if with_ai else ""
@@ -413,7 +416,6 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                 days = params["days"]
                 max_posts = params.get("max_posts")
                 task_name = f"自定义: {', '.join(keywords[:3])}"
-                _running_sessions[user_key] = task_name
                 plat_names = [ALL_PLATFORMS.get(p, p) for p in platforms]
                 ai_hint = " + AI分析" if with_ai else ""
                 limit_hint = f"\n**上限：**{max_posts} 条" if max_posts else ""
@@ -442,7 +444,7 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
         except Exception as e:
             _log(f"处理异常: {e}\n{traceback.format_exc()}")
             try:
-                _reply_c(error_card("出错了", str(e)[:200], suggestions=["重新发送试试", "发「帮助」查看说明"]))
+                _reply_c(error_card("出错了", "内部错误，请稍后重试", suggestions=["重新发送试试", "发「帮助」查看说明"]))
             except Exception:
                 pass
 
@@ -478,6 +480,8 @@ RECONNECT_MULTIPLIER = 2
 
 
 def _run_client(app_id: str, app_secret: str) -> None:
+    # SECURITY TODO: 配置飞书事件订阅的 Verification Token 和 Encrypt Key 以启用签名校验
+    # 当前为空字符串，不校验事件来源，生产环境建议配置
     event_handler = (
         EventDispatcherHandler.builder("", "")
         .register_p2_im_message_receive_v1(_handle_message)

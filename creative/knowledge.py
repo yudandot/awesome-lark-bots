@@ -11,13 +11,11 @@ creative/knowledge.py — AI 素材 Prompt 助手知识库
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Optional
 
-import yaml
+from skills.brand import BrandSkill, BRANDS_DIR, _BRAND_KEYWORDS  # noqa: F401
 
-
-BRANDS_DIR = Path(__file__).parent / "brands"
+_brand_skill = BrandSkill()
 
 
 # ──────────────────────────────────────────────
@@ -178,7 +176,7 @@ CHAT_SYSTEM_PROMPT = """你是「AI 素材 Prompt 助手」的创意讨论模式
 - 主动问关键问题：目标平台？想传达什么情绪？有没有参考？时长偏好？
 - 给出具体建议而非泛泛而谈（比如"你可以试试用仰拍+慢推来表现敬畏感"而非"可以考虑镜头运动"）
 - 如果用户的想法很模糊，主动给 2-3 个方向让他选
-- 记住 Seedance 单次最长 15 秒的限制，如果内容超 15 秒就建议分镜方案
+- 记住 Seedance 单次最长 10 秒的限制，如果内容超 10 秒就建议分镜方案
 
 沟通风格：
 - 简洁、专业，不啰嗦
@@ -191,168 +189,27 @@ CHAT_SYSTEM_PROMPT = """你是「AI 素材 Prompt 助手」的创意讨论模式
 
 
 # ──────────────────────────────────────────────
-# 品牌 Profile 加载
+# 品牌 Profile 加载（委托 skills.brand.BrandSkill）
 # ──────────────────────────────────────────────
 
 def list_brand_profiles() -> list:
     """列出所有可用的品牌 profile。"""
-    profiles = []
-    if not BRANDS_DIR.exists():
-        return profiles
-    for f in sorted(BRANDS_DIR.glob("*.yaml")):
-        if f.name.startswith("_"):
-            continue
-        try:
-            with open(f, "r", encoding="utf-8") as fh:
-                data = yaml.safe_load(fh)
-                profiles.append({
-                    "file": f.name,
-                    "path": f,
-                    "name": data.get("name", f.stem),
-                    "category": data.get("category", ""),
-                    "one_liner": data.get("one_liner", ""),
-                })
-        except Exception:
-            continue
-    return profiles
-
-
-def load_brand_profile(path: Path) -> dict:
-    """从 YAML 文件加载完整的品牌 profile。"""
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    return _brand_skill.list_brands()
 
 
 def load_brand_by_name(name: str) -> Optional[dict]:
     """按品牌文件名（不含后缀）加载 profile，找不到返回 None。"""
-    path = BRANDS_DIR / f"{name}.yaml"
-    if path.exists():
-        return load_brand_profile(path)
-    for p in list_brand_profiles():
-        if name.lower() in p["name"].lower():
-            return load_brand_profile(p["path"])
-    return None
-
-
-# ⚠️ 示例：品牌关键词映射，请根据你的品牌进行自定义。
-# key 对应 brands/ 目录下的 YAML 文件名（不含后缀）。
-_BRAND_KEYWORDS: dict[str, list[str]] = {
-    "example": [
-        "示例品牌", "example brand", "mybrand",
-    ],
-}
+    return _brand_skill.load_brand(name)
 
 
 def detect_brand_from_text(text: str) -> Optional[dict]:
     """根据消息内容自动识别品牌。匹配到关键词就加载对应 profile。"""
-    lower = text.lower()
-    for brand_key, keywords in _BRAND_KEYWORDS.items():
-        for kw in keywords:
-            if kw.lower() in lower:
-                return load_brand_by_name(brand_key)
-    return None
+    return _brand_skill.detect_brand(text)
 
 
 def brand_to_prompt_section(brand: dict) -> str:
     """将品牌 profile 转换为 system prompt 中的品牌知识段落。"""
-    parts = []
-
-    name = brand.get("name", "未知品牌")
-    company = brand.get("company", "")
-    category = brand.get("category", "")
-    one_liner = brand.get("one_liner", "")
-
-    parts.append(f"""
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-当前品牌：{name}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-公司：{company}
-类别：{category}
-简介：{one_liner}
-""")
-
-    principles = brand.get("principles", [])
-    if principles:
-        parts.append("━━ 品牌原则（所有输出必须遵守）━━")
-        for i, p in enumerate(principles, 1):
-            name_p = p.get("name", "")
-            do = p.get("do", "")
-            dont = p.get("dont", "")
-            line = f"{i}. {name_p}"
-            if do:
-                line += f" — ✓ {do}"
-            if dont:
-                line += f" | ✗ {dont}"
-            parts.append(line)
-        parts.append("")
-
-    visual = brand.get("visual", {})
-    if visual:
-        parts.append("━━ 品牌视觉词库 ━━")
-        for key, label in [("colors", "色彩"), ("lighting", "光影"),
-                           ("textures", "质感"), ("moods", "氛围"),
-                           ("camera", "运镜")]:
-            items = visual.get(key, [])
-            if items:
-                parts.append(f"【{label}】" + " | ".join(items))
-        parts.append("")
-
-    scenes = brand.get("scenes", [])
-    if scenes:
-        parts.append("━━ 场景/世界观参考 ━━")
-        for s in scenes:
-            name_s = s.get("name", "")
-            name_en = s.get("name_en", "")
-            vibe = s.get("vibe", "")
-            kw = s.get("keywords", "")
-            line = f"- {name_s}"
-            if name_en:
-                line += f" ({name_en})"
-            if vibe:
-                line += f"：{vibe}"
-            if kw:
-                line += f" → {kw}"
-            parts.append(line)
-        parts.append("")
-
-    chars = brand.get("characters", {})
-    if chars:
-        parts.append("━━ 角色/主体描述 ━━")
-        default_char = chars.get("default", "")
-        if default_char:
-            parts.append(f"默认：{default_char}")
-        for v in chars.get("variants", []):
-            parts.append(f"- {v.get('name', '')}：{v.get('look', '')}")
-        parts.append("")
-
-    refs = brand.get("style_references", [])
-    if refs:
-        parts.append("━━ 视觉风格参考 ━━")
-        for r in refs:
-            parts.append(f"- {r}")
-        parts.append("")
-
-    neg = brand.get("negative_prompts", [])
-    if neg:
-        parts.append("━━ 负面提示（AI 生成时避免）━━")
-        parts.append(" | ".join(neg))
-        parts.append("")
-
-    tone = brand.get("tone", {})
-    if tone:
-        parts.append("━━ 文案调性 ━━")
-        tone_principles = tone.get("principles", [])
-        for tp in tone_principles:
-            parts.append(f"- {tp.get('name', '')}：{tp.get('desc', '')}")
-        do_list = tone.get("do", [])
-        if do_list:
-            parts.append(f"应该：{', '.join(do_list)}")
-        dont_list = tone.get("dont", [])
-        if dont_list:
-            parts.append(f"避免：{', '.join(dont_list)}")
-        parts.append("")
-
-    return "\n".join(parts)
+    return _brand_skill.brand_to_prompt(brand)
 
 
 def build_system_prompt(brand: Optional[dict] = None) -> str:

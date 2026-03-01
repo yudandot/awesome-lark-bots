@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 import uuid
@@ -19,6 +20,12 @@ from conductor.config import DATA_DIR, log
 
 CONTENT_DIR = DATA_DIR / "content"
 CONTENT_DIR.mkdir(parents=True, exist_ok=True)
+
+_CONTENT_ID_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
+
+
+def _validate_content_id(content_id: str) -> bool:
+    return bool(_CONTENT_ID_RE.match(content_id))
 
 
 class ContentStatus:
@@ -79,6 +86,8 @@ class ContentItem:
 
     @classmethod
     def load(cls, content_id: str) -> Optional["ContentItem"]:
+        if not _validate_content_id(content_id):
+            return None
         path = CONTENT_DIR / f"{content_id}.json"
         if not path.exists():
             return None
@@ -140,52 +149,62 @@ class ContentStore:
 
     def approve(self, content_id: str) -> bool:
         """审批通过：draft → ready。"""
-        item = self.get(content_id)
-        if not item or item.status != ContentStatus.DRAFT:
-            return False
-        item.status = ContentStatus.READY
-        self.save(item)
-        return True
+        with self._lock:
+            item = ContentItem.load(content_id)
+            if not item or item.status != ContentStatus.DRAFT:
+                return False
+            item.status = ContentStatus.READY
+            item.save()
+            log.info("内容已审批: %s [%s] %s", item.content_id, item.status, item.title[:40])
+            return True
 
     def schedule(self, content_id: str, publish_time: float) -> bool:
         """设置定时发布。"""
-        item = self.get(content_id)
-        if not item or item.status not in (ContentStatus.DRAFT, ContentStatus.READY):
-            return False
-        item.status = ContentStatus.SCHEDULED
-        item.scheduled_at = publish_time
-        self.save(item)
-        log.info("已设置定时发布: %s → %s", content_id, time.strftime("%Y-%m-%d %H:%M", time.localtime(publish_time)))
-        return True
+        with self._lock:
+            item = ContentItem.load(content_id)
+            if not item or item.status not in (ContentStatus.DRAFT, ContentStatus.READY):
+                return False
+            item.status = ContentStatus.SCHEDULED
+            item.scheduled_at = publish_time
+            item.save()
+            log.info("已设置定时发布: %s → %s", content_id, time.strftime("%Y-%m-%d %H:%M", time.localtime(publish_time)))
+            return True
 
     def mark_published(self, content_id: str, platform: str, url: str = "") -> bool:
         """标记为已发布。"""
-        item = self.get(content_id)
-        if not item:
-            return False
-        item.status = ContentStatus.PUBLISHED
-        item.published_at = time.time()
-        if url:
-            item.publish_urls[platform] = url
-        self.save(item)
-        return True
+        with self._lock:
+            item = ContentItem.load(content_id)
+            if not item:
+                return False
+            item.status = ContentStatus.PUBLISHED
+            item.published_at = time.time()
+            if url:
+                item.publish_urls[platform] = url
+            item.save()
+            log.info("内容已发布: %s [%s] %s", item.content_id, item.status, item.title[:40])
+            return True
 
     def mark_failed(self, content_id: str, platform: str, error: str) -> bool:
         """标记发布失败。"""
-        item = self.get(content_id)
-        if not item:
-            return False
-        item.status = ContentStatus.FAILED
-        item.publish_errors[platform] = error
-        self.save(item)
-        return True
+        with self._lock:
+            item = ContentItem.load(content_id)
+            if not item:
+                return False
+            item.status = ContentStatus.FAILED
+            item.publish_errors[platform] = error
+            item.save()
+            log.info("内容发布失败: %s [%s] %s", item.content_id, platform, error[:80])
+            return True
 
     def delete(self, content_id: str) -> bool:
-        path = CONTENT_DIR / f"{content_id}.json"
-        if path.exists():
-            path.unlink()
-            return True
-        return False
+        if not _validate_content_id(content_id):
+            return False
+        with self._lock:
+            path = CONTENT_DIR / f"{content_id}.json"
+            if path.exists():
+                path.unlink()
+                return True
+            return False
 
     def stats(self) -> dict[str, int]:
         """统计各状态的内容数量。"""

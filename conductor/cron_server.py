@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import hmac
 import json
 import os
 import sys
@@ -47,7 +48,7 @@ class CronHandler(BaseHTTPRequestHandler):
             if not expected:
                 self._send(500, {"error": "CONDUCTOR_CRON_TOKEN 未配置"})
                 return
-            if token != expected:
+            if not hmac.compare_digest(token, expected):
                 self._send(403, {"error": "token 无效"})
                 return
 

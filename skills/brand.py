@@ -140,6 +140,8 @@ class BrandSkill(Skill):
                     line += f" ({s['name_en']})"
                 if s.get("vibe"):
                     line += f"：{s['vibe']}"
+                if s.get("keywords"):
+                    line += f" → {s['keywords']}"
                 lines.append(line)
             parts.append("\n".join(lines))
 
@@ -151,6 +153,13 @@ class BrandSkill(Skill):
                 lines.append(f"默认：{default_char}")
             for v in chars.get("variants", []):
                 lines.append(f"- {v.get('name', '')}：{v.get('look', '')}")
+            parts.append("\n".join(lines))
+
+        refs = brand.get("style_references", [])
+        if refs:
+            lines = ["━━ 视觉风格参考 ━━"]
+            for r in refs:
+                lines.append(f"- {r}")
             parts.append("\n".join(lines))
 
         neg = brand.get("negative_prompts", [])

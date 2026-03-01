@@ -624,9 +624,7 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
         try:
             session = _get_session(user_key)
             current_mode = session.get("mode", "direct")
-            print(f"[DEBUG] BEFORE classify: mode={current_mode} text={text[:40]!r}", flush=True)
             action = _classify_input(text, mode=current_mode)
-            print(f"[DEBUG] AFTER classify: action={action}", flush=True)
             _log(f"分类: mode={current_mode} action={action[0]} text={text[:40]!r}")
 
             # ── 帮助
@@ -688,7 +686,7 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                         reply_message(mid, "生成失败，请稍后重试。")
                 except Exception as e:
                     _log(f"从讨论生成异常: {e}\n{traceback.format_exc()}")
-                    reply_message(mid, f"生成出错: {str(e)[:300]}")
+                    reply_message(mid, "生成出错，内部错误，请稍后重试")
                 finally:
                     with _running_lock:
                         _running.pop(user_key, None)
@@ -731,7 +729,7 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                         reply_message(mid, "修改失败，请稍后重试。")
                 except Exception as e:
                     _log(f"修改异常: {e}\n{traceback.format_exc()}")
-                    reply_message(mid, f"修改出错: {str(e)[:300]}")
+                    reply_message(mid, "修改出错，内部错误，请稍后重试")
                 finally:
                     with _running_lock:
                         _running.pop(user_key, None)
@@ -764,7 +762,7 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                     reply_card(mid, card)
                 except Exception as e:
                     _log(f"讨论异常: {e}\n{traceback.format_exc()}")
-                    reply_message(mid, f"讨论出错: {str(e)[:300]}")
+                    reply_message(mid, "讨论出错，内部错误，请稍后重试")
                 finally:
                     with _running_lock:
                         _running.pop(user_key, None)
@@ -799,7 +797,7 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                 _log(f"生成完成: user={user_key[:20]} len={len(result or '')}")
             except Exception as e:
                 _log(f"生成异常: {e}\n{traceback.format_exc()}")
-                reply_message(mid, f"生成出错: {str(e)[:300]}")
+                reply_message(mid, "生成出错，内部错误，请稍后重试")
             finally:
                 with _running_lock:
                     _running.pop(user_key, None)
@@ -807,7 +805,7 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
         except Exception as e:
             _log(f"处理异常: {e}\n{traceback.format_exc()}")
             try:
-                reply_message(mid, f"处理出错: {str(e)[:200]}")
+                reply_message(mid, "处理出错，内部错误，请稍后重试")
             except Exception:
                 pass
 
@@ -882,6 +880,8 @@ RECONNECT_MULTIPLIER = 2
 
 
 def _run_client(app_id: str, app_secret: str) -> None:
+    # SECURITY TODO: 配置飞书事件订阅的 Verification Token 和 Encrypt Key 以启用签名校验
+    # 当前为空字符串，不校验事件来源，生产环境建议配置
     event_handler = (
         EventDispatcherHandler.builder("", "")
         .register_p2_im_message_receive_v1(_handle_message)
@@ -915,7 +915,7 @@ def main():
             "（或复用 FEISHU_APP_ID / FEISHU_APP_SECRET）"
         )
 
-    # 让 core/feishu_client.py 使用本机器人的凭证获取 token
+    # TODO: 传递凭证应通过配置对象而非修改全局环境变量，同进程多机器人时会冲突
     os.environ["FEISHU_APP_ID"] = app_id
     os.environ["FEISHU_APP_SECRET"] = app_secret
 

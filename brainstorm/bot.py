@@ -89,8 +89,8 @@ def _welcome() -> dict:
         "3️⃣ 最终交付（总结 + Claude Code prompt + 视觉 prompt）",
         examples=[
             "咖啡品牌 × 音乐节跨界联动",
-            "脑暴：给男人卖胸罩",
-            "脑暴 三体 × 卖地球",
+            "脑暴：博物馆夜间沉浸式体验",
+            "宠物友好社区活动策划",
         ],
         hints=["多行消息：第一行为主题，其余为背景材料", "发送「帮助」查看完整说明"],
     )
@@ -106,8 +106,8 @@ def _help() -> dict:
          "3️⃣ 最终交付（总结 + Claude Code prompt + 视觉 prompt）"),
         ("示例",
          "> 咖啡品牌 × 音乐节跨界联动\n"
-         "> 脑暴：给男人卖胸罩\n"
-         "> 三体 × 卖地球"),
+         "> 脑暴：博物馆夜间沉浸式体验\n"
+         "> 宠物友好社区活动策划"),
     ], footer="脑暴过程约 3-5 分钟，完成后会通知你")
 
 
@@ -216,7 +216,7 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                 _log(f"脑暴完成: {path}")
             except Exception as e:
                 _log(f"脑暴异常: {e}\n{traceback.format_exc()}")
-                err = error_card("脑暴执行出错", str(e)[:300], suggestions=["重新发送主题再试一次"])
+                err = error_card("脑暴执行出错", "内部错误，请稍后重试", suggestions=["重新发送主题再试一次"])
                 if uid:
                     send_card_to_user(uid, err)
                 else:
@@ -227,7 +227,7 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
         except Exception as e:
             _log(f"处理异常: {e}\n{traceback.format_exc()}")
             try:
-                reply_card(mid, error_card("处理出错", str(e)[:200], suggestions=["重新发送试试"]))
+                reply_card(mid, error_card("处理出错", "内部错误，请稍后重试", suggestions=["重新发送试试"]))
             except Exception:
                 pass
 
@@ -269,6 +269,8 @@ RECONNECT_MULTIPLIER = 2          # 每次翻倍
 
 
 def _run_client(app_id: str, app_secret: str) -> None:
+    # SECURITY TODO: 配置飞书事件订阅的 Verification Token 和 Encrypt Key 以启用签名校验
+    # 当前为空字符串，不校验事件来源，生产环境建议配置
     event_handler = (
         EventDispatcherHandler.builder("", "")
         .register_p2_im_message_receive_v1(_handle_message)

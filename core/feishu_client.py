@@ -22,6 +22,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 from typing import List, Optional, Tuple
 
@@ -37,6 +38,7 @@ _token_cache: Optional[str] = None
 _token_expire_at: float = 0.0
 _app_token_cache: Optional[str] = None
 _app_token_expire_at: float = 0.0
+_token_lock = threading.Lock()
 
 
 def _warn(msg: str) -> None:
@@ -48,18 +50,22 @@ def get_tenant_access_token() -> str:
     now = time.time()
     if _token_cache and _token_expire_at > now + 60:
         return _token_cache
-    app_id = (os.environ.get("FEISHU_APP_ID") or "").strip()
-    app_secret = (os.environ.get("FEISHU_APP_SECRET") or "").strip()
-    if not app_id or not app_secret:
-        raise ValueError("请设置环境变量 FEISHU_APP_ID 和 FEISHU_APP_SECRET")
-    url = f"{FEISHU_API_BASE}/auth/v3/tenant_access_token/internal"
-    resp = requests.post(url, json={"app_id": app_id, "app_secret": app_secret}, timeout=10)
-    data = resp.json()
-    if data.get("code") != 0:
-        raise RuntimeError(f"获取 tenant_access_token 失败: {data}")
-    _token_cache = data["tenant_access_token"]
-    _token_expire_at = now + data.get("expire", 7200)
-    return _token_cache
+    with _token_lock:
+        now = time.time()
+        if _token_cache and _token_expire_at > now + 60:
+            return _token_cache
+        app_id = (os.environ.get("FEISHU_APP_ID") or "").strip()
+        app_secret = (os.environ.get("FEISHU_APP_SECRET") or "").strip()
+        if not app_id or not app_secret:
+            raise ValueError("请设置环境变量 FEISHU_APP_ID 和 FEISHU_APP_SECRET")
+        url = f"{FEISHU_API_BASE}/auth/v3/tenant_access_token/internal"
+        resp = requests.post(url, json={"app_id": app_id, "app_secret": app_secret}, timeout=10)
+        data = resp.json()
+        if data.get("code") != 0:
+            raise RuntimeError(f"获取 tenant_access_token 失败: {data}")
+        _token_cache = data["tenant_access_token"]
+        _token_expire_at = now + data.get("expire", 7200)
+        return _token_cache
 
 
 def get_app_access_token() -> str:
@@ -67,18 +73,22 @@ def get_app_access_token() -> str:
     now = time.time()
     if _app_token_cache and _app_token_expire_at > now + 60:
         return _app_token_cache
-    app_id = (os.environ.get("FEISHU_APP_ID") or "").strip()
-    app_secret = (os.environ.get("FEISHU_APP_SECRET") or "").strip()
-    if not app_id or not app_secret:
-        raise ValueError("请设置环境变量 FEISHU_APP_ID 和 FEISHU_APP_SECRET")
-    url = f"{FEISHU_API_BASE}/auth/v3/app_access_token/internal"
-    resp = requests.post(url, json={"app_id": app_id, "app_secret": app_secret}, timeout=10)
-    data = resp.json()
-    if data.get("code") != 0:
-        raise RuntimeError(f"获取 app_access_token 失败: {data}")
-    _app_token_cache = data["app_access_token"]
-    _app_token_expire_at = now + data.get("expire", 7200)
-    return _app_token_cache
+    with _token_lock:
+        now = time.time()
+        if _app_token_cache and _app_token_expire_at > now + 60:
+            return _app_token_cache
+        app_id = (os.environ.get("FEISHU_APP_ID") or "").strip()
+        app_secret = (os.environ.get("FEISHU_APP_SECRET") or "").strip()
+        if not app_id or not app_secret:
+            raise ValueError("请设置环境变量 FEISHU_APP_ID 和 FEISHU_APP_SECRET")
+        url = f"{FEISHU_API_BASE}/auth/v3/app_access_token/internal"
+        resp = requests.post(url, json={"app_id": app_id, "app_secret": app_secret}, timeout=10)
+        data = resp.json()
+        if data.get("code") != 0:
+            raise RuntimeError(f"获取 app_access_token 失败: {data}")
+        _app_token_cache = data["app_access_token"]
+        _app_token_expire_at = now + data.get("expire", 7200)
+        return _app_token_cache
 
 
 def _headers(access_token: Optional[str] = None) -> dict:

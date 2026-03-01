@@ -425,7 +425,7 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
         except Exception as e:
             _log(f"处理异常: {e}\n{traceback.format_exc()}")
             try:
-                reply_card(mid, error_card("处理出错", str(e)[:200], suggestions=["重新发送试试", "发「帮助」看指令"]))
+                reply_card(mid, error_card("处理出错", "内部错误，请稍后重试", suggestions=["重新发送试试", "发「帮助」看指令"]))
             except Exception:
                 pass
 
@@ -509,6 +509,8 @@ def _run_health_server(port: int) -> None:
 
 
 def _run_client(app_id: str, app_secret: str) -> None:
+    # SECURITY TODO: 配置飞书事件订阅的 Verification Token 和 Encrypt Key 以启用签名校验
+    # 当前为空字符串，不校验事件来源，生产环境建议配置
     event_handler = (
         EventDispatcherHandler.builder("", "")
         .register_p2_im_message_receive_v1(_handle_message)
@@ -529,7 +531,7 @@ def main():
             "（或复用 FEISHU_APP_ID / FEISHU_APP_SECRET）"
         )
 
-    # 确保 core/feishu_client.py 使用本 bot 的凭证获取 token
+    # TODO: 传递凭证应通过配置对象而非修改全局环境变量，同进程多机器人时会冲突
     os.environ["FEISHU_APP_ID"] = app_id
     os.environ["FEISHU_APP_SECRET"] = app_secret
 
