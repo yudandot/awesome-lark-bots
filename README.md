@@ -1,7 +1,10 @@
-# AIlarkteams — 飞书 AI 团队协作工具集
+# AIlarkteam — 飞书 AI 团队协作工具集
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org)
+
+**[English](#english)** | **中文**
 
 一套在飞书（Lark）上运行的开源 AI 机器人，覆盖**创意脑暴、项目规划、日常助手、素材 Prompt 生成、舆情监控、新闻聚合、自媒体全流程编排**七大场景。
 
@@ -410,3 +413,75 @@ docker-compose logs -f brainstorm
 ## 许可证
 
 [MIT License](LICENSE) — 你可以自由使用、修改和分发。
+
+---
+
+<a name="english"></a>
+
+## English
+
+### What is AIlarkteam?
+
+A collection of 7 open-source AI bots running on **Feishu (Lark)**, covering brainstorming, planning, daily assistance, creative prompt generation, social media monitoring, news aggregation, and end-to-end content creation workflows.
+
+All bots are **compatible with any LLM that supports the OpenAI API protocol** — DeepSeek, OpenAI, Claude, Doubao, Kimi, Qwen, GLM, and more. Just change the API keys in `.env`.
+
+### The 7 Bots
+
+| Bot | What it does | Command |
+|-----|-------------|---------|
+| **Content Assistant** ⚗️ | End-to-end content pipeline: topic → brainstorm → plan → create → store → publish | `python3 -m conductor` |
+| **Brainstorm** | 5 AI personas simulate a real team discussion in 4 rounds | `python3 -m brainstorm` |
+| **Planner** | 6-step structured decision-making, from problem definition to action plan | `python3 -m planner` |
+| **Assistant** | Memos, calendar management, daily briefings | `python3 -m assistant` |
+| **Creative Prompt** | Generate prompts for Seedance / MidJourney / Sora and other AI tools | `python3 -m creative` |
+| **Sentiment Monitor** | Collect social media data from 15 platforms (Weibo, Douyin, Xiaohongshu, TikTok, etc.) | `python3 -m sentiment` |
+| **News Digest** | Multi-source news aggregation + AI analysis, daily push | `python3 -m newsbot` |
+
+> ⚗️ **Content Assistant** is in active exploration — the basic framework works end-to-end, but content quality control and automated publishing to social media platforms are still areas we're actively improving. Community contributions are very welcome!
+
+### Quick Start
+
+```bash
+# 1. Install dependencies (Python 3.11+)
+pip3 install -r requirements.txt
+
+# 2. Configure environment variables
+cp .env.example .env
+# Edit .env — minimum: FEISHU_APP_ID + FEISHU_APP_SECRET + DEEPSEEK_API_KEY
+
+# 3. Start any bot
+python3 -m brainstorm    # Brainstorm bot
+python3 -m planner       # Planner bot
+python3 -m assistant     # Assistant bot
+python3 -m creative      # Creative Prompt bot
+python3 -m sentiment     # Sentiment Monitor
+python3 -m newsbot       # News Digest
+python3 -m conductor     # Content Assistant
+```
+
+### Feishu (Lark) Setup
+
+1. Go to [Feishu Open Platform](https://open.feishu.cn/app) and create an app
+2. Get the **App ID** and **App Secret**, put them in `.env`
+3. Enable **Bot** capability, subscribe to **Receive Message v2.0** event
+4. Choose **Long Connection (WebSocket)** mode — no public URL needed
+5. Publish the app, run the bot, and send it a message on Feishu
+
+### LLM Compatibility
+
+The project calls LLMs through `core/llm.py` using the OpenAI-compatible API protocol. You can swap in **any provider** by changing three variables in `.env`:
+
+- `*_API_KEY` — your API key
+- `*_BASE_URL` — the provider's API endpoint
+- `*_MODEL` — the model name
+
+Currently configured with DeepSeek, Doubao, and Kimi as a starting point, but OpenAI, Claude, Qwen, GLM, and others all work.
+
+### Contributing
+
+We welcome all contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+### License
+
+[MIT License](LICENSE)
