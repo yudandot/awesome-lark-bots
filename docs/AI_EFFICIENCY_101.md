@@ -392,11 +392,12 @@ AI 提效不是学一个工具，而是养成一种**把工作流程拆解、结
 
 ## 第五部分：实操教学 — 手把手用起来
 
-### 5.1 环境准备（一次性，10 分钟）
+### 5.1 环境准备
 
-#### Step 1：拿到 API Key
+> 详细的安装配置教程（含截图级别的操作说明）见 [SETUP_GUIDE.md](SETUP_GUIDE.md)。
+> 这里只列快速摘要。
 
-你需要三把"钥匙"：
+**你需要三把"钥匙"：**
 
 | 钥匙 | 去哪拿 | 干什么用 |
 |------|--------|---------|
@@ -406,35 +407,18 @@ AI 提效不是学一个工具，而是养成一种**把工作流程拆解、结
 
 > 如果只想先体验最基础的功能，只需要飞书 + DeepSeek 两个就够了。
 
-#### Step 2：飞书配置（5 分钟）
-
-1. 登录飞书开放平台 → 创建「自建应用」
-2. 左侧菜单「机器人」→ 启用
-3. 「事件订阅」→ 选择 **长连接模式**（不需要公网 IP）
-4. 添加事件：`接收消息 v2.0`
-5. 发布应用
-
-#### Step 3：启动
+**快速启动：**
 
 ```bash
-# 克隆代码
-git clone <项目地址>
-cd AIlarkteam
-
-# 安装依赖
+git clone <项目地址> && cd AIlarkteam
 pip3 install -r requirements.txt
-
-# 配置环境变量
-cp .env.example .env
-# 编辑 .env，填入你的三把钥匙
-
-# 启动！（选一个）
-python3 -m brainstorm    # 脑暴机器人
-python3 -m planner       # 规划机器人
-python3 -m assistant     # 助手机器人
+cp .env.example .env       # 然后编辑 .env 填入你的钥匙
+python3 -m brainstorm      # 启动！（或 planner / assistant / creative 等）
 ```
 
-看到终端打印 `connected` 之类的日志，说明启动成功。在飞书上找到你的机器人，发条消息试试。
+看到终端打印连接日志说明启动成功。在飞书上找到你的机器人，发条消息试试。
+
+> 遇到问题？完整的排查指南见 [SETUP_GUIDE.md → 出了问题？](SETUP_GUIDE.md#出了问题)
 
 ---
 
