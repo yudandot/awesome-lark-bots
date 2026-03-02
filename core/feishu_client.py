@@ -1074,6 +1074,181 @@ def complete_task(task_id: str) -> Tuple[bool, str]:
 
 # ── 文档读取 ─────────────────────────────────────────────────
 
+# ── 多维表格（Bitable）─────────────────────────────────────────
+
+def create_bitable(
+    name: str,
+    folder_token: str = "",
+) -> Tuple[bool, dict]:
+    """创建飞书多维表格应用。
+
+    Returns: (ok, {"app_token", "url", "default_table_id"} | {"error": str})
+    """
+    try:
+        token = get_user_access_token("doc_create") or get_tenant_access_token()
+        url = f"{FEISHU_API_BASE}/bitable/v1/apps"
+        body: dict = {"name": name}
+        if folder_token:
+            body["folder_token"] = folder_token
+        resp = requests.post(url, json=body, headers=_headers(token), timeout=15)
+        data = resp.json()
+        if data.get("code") != 0:
+            return False, {"error": data.get("msg", "创建多维表格失败") or str(data)}
+        app = (data.get("data") or {}).get("app") or {}
+        app_token = app.get("app_token", "")
+        app_url = app.get("url", "")
+        default_table_id = ""
+        if app_token:
+            resp2 = requests.get(
+                f"{FEISHU_API_BASE}/bitable/v1/apps/{app_token}/tables",
+                headers=_headers(token), timeout=10,
+            )
+            tables = ((resp2.json().get("data") or {}).get("items")) or []
+            if tables:
+                default_table_id = tables[0].get("table_id", "")
+        return True, {
+            "app_token": app_token,
+            "url": app_url,
+            "default_table_id": default_table_id,
+        }
+    except Exception as e:
+        return False, {"error": f"创建多维表格异常: {e}"}
+
+
+def create_bitable_table(
+    app_token: str,
+    name: str,
+    fields: list,
+    default_view_name: str = "默认视图",
+) -> Tuple[bool, str]:
+    """在多维表格中创建数据表（含字段定义）。返回 (ok, table_id_or_error)。
+
+    fields: [{"field_name": "名称", "type": 1}, ...]
+      type: 1=文本, 2=数字, 3=单选, 5=日期, 15=超链接
+    """
+    try:
+        token = get_user_access_token("doc_create") or get_tenant_access_token()
+        url = f"{FEISHU_API_BASE}/bitable/v1/apps/{app_token}/tables"
+        body = {"table": {"name": name, "default_view_name": default_view_name, "fields": fields}}
+        resp = requests.post(url, json=body, headers=_headers(token), timeout=15)
+        data = resp.json()
+        if data.get("code") != 0:
+            return False, data.get("msg", "创建数据表失败") or str(data)
+        table_id = (data.get("data") or {}).get("table_id", "")
+        return bool(table_id), table_id or "未返回 table_id"
+    except Exception as e:
+        return False, f"创建数据表异常: {e}"
+
+
+def add_bitable_record(
+    app_token: str,
+    table_id: str,
+    fields: dict,
+) -> Tuple[bool, str]:
+    """向多维表格添加一条记录。返回 (ok, record_id_or_error)。"""
+    try:
+        url = f"{FEISHU_API_BASE}/bitable/v1/apps/{app_token}/tables/{table_id}/records"
+        resp = requests.post(url, json={"fields": fields}, headers=_headers(), timeout=15)
+        data = resp.json()
+        if data.get("code") != 0:
+            return False, data.get("msg", "添加记录失败") or str(data)
+        record = (data.get("data") or {}).get("record") or {}
+        return True, record.get("record_id", "")
+    except Exception as e:
+        return False, f"添加记录异常: {e}"
+
+
+def list_bitable_records(
+    app_token: str,
+    table_id: str,
+    filter_expr: str = "",
+    page_size: int = 200,
+) -> Tuple[bool, list]:
+    """查询多维表格记录。
+
+    filter_expr: 筛选表达式，如 'CurrentValue.[状态]="进行中"'
+    Returns: (ok, [{"record_id": ..., "fields": {...}}, ...])
+    """
+    try:
+        url = f"{FEISHU_API_BASE}/bitable/v1/apps/{app_token}/tables/{table_id}/records"
+        params: dict = {"page_size": page_size}
+        if filter_expr:
+            params["filter"] = filter_expr
+        all_records: list = []
+        page_token = None
+        for _ in range(20):
+            if page_token:
+                params["page_token"] = page_token
+            resp = requests.get(url, params=params, headers=_headers(), timeout=15)
+            data = resp.json()
+            if data.get("code") != 0:
+                if not all_records:
+                    return False, []
+                break
+            items = (data.get("data") or {}).get("items") or []
+            all_records.extend(items)
+            if not (data.get("data") or {}).get("has_more"):
+                break
+            page_token = (data.get("data") or {}).get("page_token")
+            if not page_token:
+                break
+        return True, all_records
+    except Exception:
+        return False, []
+
+
+def update_bitable_record(
+    app_token: str,
+    table_id: str,
+    record_id: str,
+    fields: dict,
+) -> Tuple[bool, str]:
+    """更新多维表格中一条记录的指定字段。返回 (ok, record_id_or_error)。"""
+    try:
+        url = (
+            f"{FEISHU_API_BASE}/bitable/v1/apps/{app_token}"
+            f"/tables/{table_id}/records/{record_id}"
+        )
+        resp = requests.put(url, json={"fields": fields}, headers=_headers(), timeout=15)
+        data = resp.json()
+        if data.get("code") != 0:
+            return False, data.get("msg", "更新记录失败") or str(data)
+        rec = (data.get("data") or {}).get("record") or {}
+        return True, rec.get("record_id", record_id)
+    except Exception as e:
+        return False, f"更新记录异常: {e}"
+
+
+def batch_delete_bitable_records(
+    app_token: str,
+    table_id: str,
+    record_ids: List[str],
+) -> Tuple[bool, str]:
+    """批量删除多维表格记录。每次最多 500 条，超出自动分批。"""
+    if not record_ids:
+        return True, "nothing to delete"
+    try:
+        url = (
+            f"{FEISHU_API_BASE}/bitable/v1/apps/{app_token}"
+            f"/tables/{table_id}/records/batch_delete"
+        )
+        deleted = 0
+        for i in range(0, len(record_ids), 500):
+            batch = record_ids[i : i + 500]
+            resp = requests.post(
+                url, json={"records": batch}, headers=_headers(), timeout=30,
+            )
+            data = resp.json()
+            if data.get("code") != 0:
+                return False, data.get("msg", "批量删除失败") or str(data)
+            deleted += len(batch)
+        return True, f"deleted {deleted}"
+    except Exception as e:
+        return False, f"批量删除异常: {e}"
+
+
+# ── 文档读取 ─────────────────────────────────────────────────
+
 def read_document_content(document_id: str) -> Tuple[bool, str]:
     """读取飞书云文档内容为纯文本（Markdown 风格）。"""
     try:

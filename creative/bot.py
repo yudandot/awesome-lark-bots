@@ -150,19 +150,10 @@ def _format_single_shot_card(raw: str, brand_name: str) -> dict:
         sections.append({"text": "**配套文案**\n\n" + copywriting.strip()})
 
     sections.append({"divider": True})
-    sections.append({"note": f"品牌: {brand_name}  ·  「改一下：xxx」调整  ·  点击按钮或发「安排制作」落地执行"})
+    sections.append({"text": "💡 满意这个方向？发「**安排制作**」生成执行Brief并提交需求"})
+    sections.append({"note": f"品牌: {brand_name}  ·  「改一下：xxx」调整"})
 
-    card = _card("素材Bot · 单镜头 Prompt", sections, color="blue")
-    card["elements"].insert(-1, {
-        "tag": "action",
-        "actions": [{
-            "tag": "button",
-            "text": {"tag": "plain_text", "content": "🎬 安排制作"},
-            "type": "primary",
-            "value": {"action": "start_exec_brief"},
-        }],
-    })
-    return card
+    return _card("素材Bot · 单镜头 Prompt", sections, color="blue")
 
 
 def _format_storyboard_card(raw: str, brand_name: str) -> dict:
@@ -188,22 +179,12 @@ def _format_storyboard_card(raw: str, brand_name: str) -> dict:
         sections.append({"divider": True})
 
     shot_count = len(parts["shots"])
+    sections.append({"text": "💡 满意这个方向？发「**安排制作**」生成执行Brief并提交需求"})
     sections.append({"note": (
-        f"品牌: {brand_name}  ·  共 {shot_count} 个 Shot  ·  "
-        "点击按钮或发「安排制作」落地执行"
+        f"品牌: {brand_name}  ·  共 {shot_count} 个 Shot  ·  「改一下：xxx」调整"
     )})
 
-    card = _card(f"素材Bot · {shot_count} 镜分镜 Prompt", sections, color="purple")
-    card["elements"].insert(-1, {
-        "tag": "action",
-        "actions": [{
-            "tag": "button",
-            "text": {"tag": "plain_text", "content": "🎬 安排制作"},
-            "type": "primary",
-            "value": {"action": "start_exec_brief"},
-        }],
-    })
-    return card
+    return _card(f"素材Bot · {shot_count} 镜分镜 Prompt", sections, color="purple")
 
 
 def _split_storyboard(raw: str) -> dict:
@@ -316,8 +297,7 @@ def _welcome_card() -> dict:
             "> 聊聊：我想做一个关于春日出游的视频\n"
             "> （聊完发「**生成**」出正式 prompt）\n\n"
             "**落地执行？**\n"
-            "> prompt 生成后点击「**🎬 安排制作**」按钮\n"
-            "> 或直接发「**安排制作**」→ 讨论执行细节 → 生成Brief文档 → 提交需求"
+            "> prompt 生成后发「**安排制作**」→ 讨论执行细节 → 生成Brief文档 → 提交需求"
         )},
         {"divider": True},
         {"text": (
@@ -1286,67 +1266,6 @@ def _handle_message_read(_data) -> None:
     pass
 
 
-# ── 卡片操作 ─────────────────────────────────────────────────
-
-def _handle_card_action(data) -> dict:
-    """处理卡片按钮点击事件（如「安排制作」）。"""
-    _log("收到卡片操作事件")
-    try:
-        action_value = {}
-        open_id = ""
-
-        if hasattr(data, 'action'):
-            action_value = getattr(data.action, 'value', {}) or {}
-        elif isinstance(data, dict):
-            action_value = (data.get('action') or {}).get('value', {})
-
-        if hasattr(data, 'open_id'):
-            open_id = data.open_id or ""
-        elif isinstance(data, dict):
-            open_id = data.get('open_id', '')
-
-        if isinstance(action_value, str):
-            try:
-                action_value = json.loads(action_value)
-            except (json.JSONDecodeError, TypeError):
-                action_value = {}
-
-        action_name = action_value.get("action", "") if isinstance(action_value, dict) else ""
-        _log(f"卡片操作: action={action_name} open_id={open_id[:20]}")
-
-        if action_name == "start_exec_brief" and open_id:
-            threading.Thread(
-                target=_start_exec_brief_from_card,
-                args=(open_id,),
-                daemon=True,
-            ).start()
-            return {"toast": {"type": "info", "content": "正在进入执行讨论…"}}
-
-        return {}
-    except Exception as e:
-        _log(f"卡片操作异常: {e}\n{traceback.format_exc()}")
-        return {}
-
-
-def _start_exec_brief_from_card(open_id: str) -> None:
-    """从卡片按钮触发的执行讨论入口。"""
-    try:
-        session = _get_session(open_id)
-        ai_prompt = session.get("last_result", "")
-        if not ai_prompt:
-            send_card_to_user(open_id, _card("没有可执行的AI prompt", [
-                {"text": "请先生成一个AI素材prompt，然后再安排制作。"},
-            ], color="orange"))
-            return
-        _start_exec_discuss(open_id, open_id, None, ai_prompt)
-    except Exception as e:
-        _log(f"卡片触发执行讨论异常: {e}\n{traceback.format_exc()}")
-        try:
-            send_message_to_user(open_id, "启动执行讨论出错，请发「安排制作」重试。")
-        except Exception:
-            pass
-
-
 # ── 长连接 ───────────────────────────────────────────────────
 
 RECONNECT_INITIAL_DELAY = 5
@@ -1362,27 +1281,12 @@ def _run_client(app_id: str, app_secret: str) -> None:
         .register_p2_im_message_message_read_v1(_handle_message_read)
         .build()
     )
-
-    card_handler = None
-    try:
-        card_handler = lark.CardActionHandler.builder(
-            _ENCRYPT_KEY, _VERIFY_TOKEN,
-        ).register(
-            _handle_card_action,
-        ).build()
-        _log("卡片操作处理器已注册")
-    except Exception as e:
-        _log(f"卡片操作处理器初始化失败（发「安排制作」仍可触发）: {e}")
-
-    cli_kwargs = dict(
+    cli = lark.ws.Client(
+        app_id, app_secret,
         event_handler=event_handler,
         log_level=LogLevel.DEBUG,
         domain="https://open.feishu.cn",
     )
-    if card_handler:
-        cli_kwargs["card_handler"] = card_handler
-
-    cli = lark.ws.Client(app_id, app_secret, **cli_kwargs)
     cli.start()
 
 

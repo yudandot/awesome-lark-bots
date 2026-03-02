@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-creative/asset_tracker.py — 素材需求管理
+creative/asset_tracker.py — 素材需求管理（多维表格版）
 
 维护素材执行需求的全生命周期：
-- 一张飞书电子表格作为管理总表（含「总表」tab + 按月 tab）
-- 提交需求时同时写入总表和当月 tab
+- 一张飞书多维表格，结构化字段（单选状态、链接等）
+- 提交需求时写入记录，对接人直接在多维表格上操作
+- 月度统计通过日期筛选实现，无需额外 tab
 - 与 assistant 项目管理表轻量同步
 
 存储路径：data/creative_assets.json
@@ -19,10 +20,24 @@ from typing import Any, Dict, Optional, Tuple
 _CONFIG_PATH = str(Path(__file__).resolve().parent.parent / "data" / "creative_assets.json")
 _lock = threading.Lock()
 
-ASSET_HEADERS = [
-    "需求编号", "品牌", "创意概念", "素材类型", "渠道",
-    "执行方", "预算", "截止日期", "状态", "Brief链接",
-    "提交人", "提交日期",
+ASSET_TABLE_FIELDS = [
+    {"field_name": "需求编号", "type": 1},
+    {"field_name": "品牌", "type": 1},
+    {"field_name": "创意概念", "type": 1},
+    {"field_name": "素材类型", "type": 3, "property": {"options": [
+        {"name": "视频"}, {"name": "图片"}, {"name": "动图"}, {"name": "其他"},
+    ]}},
+    {"field_name": "渠道", "type": 1},
+    {"field_name": "执行方", "type": 1},
+    {"field_name": "预算", "type": 1},
+    {"field_name": "截止日期", "type": 1},
+    {"field_name": "状态", "type": 3, "property": {"options": [
+        {"name": "待分配"}, {"name": "进行中"}, {"name": "待审核"},
+        {"name": "已完成"}, {"name": "已取消"},
+    ]}},
+    {"field_name": "Brief链接", "type": 15},
+    {"field_name": "提交人", "type": 1},
+    {"field_name": "提交日期", "type": 1},
 ]
 
 
@@ -58,87 +73,42 @@ def _month_key(dt: Optional[datetime] = None) -> str:
     return (dt or datetime.now()).strftime("%Y-%m")
 
 
-def _month_tab_title(key: str) -> str:
-    y, m = key.split("-")
-    return f"{y}年{int(m)}月"
+# ── 多维表格初始化 ────────────────────────────────────────────
 
-
-# ── 总表初始化 ────────────────────────────────────────────────
-
-def init_master_sheet(owner_open_id: Optional[str] = None) -> Tuple[bool, str]:
-    """创建素材需求管理总表（首次使用时自动调用）。"""
-    from core.feishu_client import create_spreadsheet_detail, write_sheet_header, add_sheet_tab
+def init_master_table(owner_open_id: Optional[str] = None) -> Tuple[bool, str]:
+    """创建素材需求管理多维表格（首次使用时自动调用）。"""
+    from core.feishu_client import create_bitable, create_bitable_table
 
     with _lock:
         cfg = _load_config()
-        if cfg.get("spreadsheet_token"):
+        if cfg.get("app_token") and cfg.get("table_id"):
             return True, cfg.get("url", "")
 
-    ok, detail = create_spreadsheet_detail(
-        title="📋 素材需求管理表",
-        headers=ASSET_HEADERS,
-        rows=[],
-        owner_open_id=owner_open_id,
-        theme="indigo",
-    )
+    ok, result = create_bitable("📋 素材需求管理")
     if not ok:
-        return False, str(detail)
+        return False, result.get("error", "创建多维表格失败")
 
-    ss_token = detail["spreadsheet_token"]
-    master_sid = detail["sheet_id"]
-    url = detail["url"]
+    app_token = result["app_token"]
+    app_url = result["url"]
 
-    mk = _month_key()
-    tab_ok, monthly_sid = add_sheet_tab(ss_token, _month_tab_title(mk), index=1)
-    if tab_ok:
-        write_sheet_header(ss_token, monthly_sid, ASSET_HEADERS, theme="green")
+    tok, table_id = create_bitable_table(
+        app_token, "素材需求", ASSET_TABLE_FIELDS, default_view_name="总表",
+    )
+    if not tok:
+        table_id = result.get("default_table_id", "")
+        if not table_id:
+            return False, f"创建数据表失败: {table_id}"
 
     with _lock:
         cfg = _load_config()
         cfg.update({
-            "spreadsheet_token": ss_token,
-            "master_sheet_id": master_sid,
-            "url": url,
-            "monthly_sheets": {mk: monthly_sid} if tab_ok else {},
+            "app_token": app_token,
+            "table_id": table_id,
+            "url": app_url,
             "next_seq": cfg.get("next_seq", 1),
         })
         _save_config(cfg)
-    return True, url
-
-
-# ── 月度 tab ──────────────────────────────────────────────────
-
-def _ensure_monthly_tab() -> Tuple[str, str]:
-    """确保当月 tab 存在，返回 (spreadsheet_token, sheet_id)。"""
-    from core.feishu_client import add_sheet_tab, write_sheet_header
-
-    mk = _month_key()
-    with _lock:
-        cfg = _load_config()
-        ss_token = cfg.get("spreadsheet_token", "")
-        monthly = cfg.get("monthly_sheets", {})
-        if mk in monthly:
-            return ss_token, monthly[mk]
-
-    if not ss_token:
-        ok, _ = init_master_sheet()
-        if not ok:
-            return "", ""
-        cfg = _load_config()
-        ss_token = cfg.get("spreadsheet_token", "")
-        monthly = cfg.get("monthly_sheets", {})
-        if mk in monthly:
-            return ss_token, monthly[mk]
-
-    tab_ok, sid = add_sheet_tab(ss_token, _month_tab_title(mk))
-    if tab_ok:
-        write_sheet_header(ss_token, sid, ASSET_HEADERS, theme="green")
-        with _lock:
-            cfg = _load_config()
-            cfg.setdefault("monthly_sheets", {})[mk] = sid
-            _save_config(cfg)
-        return ss_token, sid
-    return ss_token, ""
+    return True, app_url
 
 
 # ── 提交需求 ──────────────────────────────────────────────────
@@ -148,48 +118,51 @@ def submit_asset_request(
     brief_url: str = "",
     owner_open_id: Optional[str] = None,
 ) -> Tuple[bool, str]:
-    """提交一条素材需求到管理表。返回 (ok, req_id_or_error)。
+    """提交一条素材需求到多维表格。返回 (ok, req_id_or_error)。
 
     info keys: brand, concept, asset_type, channel, executor, budget, deadline, contact, submitter
     """
-    from core.feishu_client import append_spreadsheet_rows
+    from core.feishu_client import add_bitable_record
 
     cfg = _load_config()
-    ss_token = cfg.get("spreadsheet_token", "")
-    master_sid = cfg.get("master_sheet_id", "")
+    app_token = cfg.get("app_token", "")
+    table_id = cfg.get("table_id", "")
 
-    if not ss_token or not master_sid:
-        ok, url = init_master_sheet(owner_open_id)
+    if not app_token or not table_id:
+        ok, msg = init_master_table(owner_open_id)
         if not ok:
-            return False, f"创建管理表失败: {url}"
+            return False, f"初始化管理表失败: {msg}"
         cfg = _load_config()
-        ss_token = cfg["spreadsheet_token"]
-        master_sid = cfg["master_sheet_id"]
+        app_token = cfg["app_token"]
+        table_id = cfg["table_id"]
 
     req_id = _next_id()
     now = datetime.now()
-    row = [
-        req_id,
-        info.get("brand", "待确认"),
-        info.get("concept", ""),
-        info.get("asset_type", "待确认"),
-        info.get("channel", "待确认"),
-        info.get("executor", "待确认"),
-        info.get("budget", "待确认"),
-        info.get("deadline", "待确认"),
-        "待分配",
-        brief_url,
-        info.get("submitter", ""),
-        now.strftime("%Y-%m-%d"),
-    ]
 
-    ok1, msg1 = append_spreadsheet_rows(ss_token, master_sid, [row])
-    if not ok1:
-        return False, f"写入总表失败: {msg1}"
+    asset_type = info.get("asset_type", "其他")
+    valid_types = {"视频", "图片", "动图", "其他"}
+    if asset_type not in valid_types:
+        asset_type = "其他"
 
-    _, monthly_sid = _ensure_monthly_tab()
-    if monthly_sid:
-        append_spreadsheet_rows(ss_token, monthly_sid, [row])
+    fields: Dict[str, Any] = {
+        "需求编号": req_id,
+        "品牌": info.get("brand", "待确认"),
+        "创意概念": info.get("concept", ""),
+        "素材类型": asset_type,
+        "渠道": info.get("channel", "待确认"),
+        "执行方": info.get("executor", "待确认"),
+        "预算": info.get("budget", "待确认"),
+        "截止日期": info.get("deadline", "待确认"),
+        "状态": "待分配",
+        "提交人": info.get("submitter", ""),
+        "提交日期": now.strftime("%Y-%m-%d"),
+    }
+    if brief_url:
+        fields["Brief链接"] = {"link": brief_url, "text": "查看Brief"}
+
+    ok, rid_or_err = add_bitable_record(app_token, table_id, fields)
+    if not ok:
+        return False, f"添加记录失败: {rid_or_err}"
 
     return True, req_id
 
@@ -198,25 +171,28 @@ def submit_asset_request(
 
 def get_monthly_stats(month: Optional[str] = None) -> Dict[str, Any]:
     """获取当月（或指定月）素材需求统计。"""
-    from core.feishu_client import read_spreadsheet_values
+    from core.feishu_client import list_bitable_records
 
     mk = month or _month_key()
     cfg = _load_config()
-    ss_token = cfg.get("spreadsheet_token", "")
-    monthly = cfg.get("monthly_sheets", {})
-    sid = monthly.get(mk, "")
+    app_token = cfg.get("app_token", "")
+    table_id = cfg.get("table_id", "")
 
-    if not ss_token or not sid:
+    if not app_token or not table_id:
         return {"total": 0, "by_status": {}, "month": mk}
 
-    ok, values = read_spreadsheet_values(ss_token, f"{sid}!A2:L200")
-    if not ok or not values:
+    ok, records = list_bitable_records(app_token, table_id)
+    if not ok:
         return {"total": 0, "by_status": {}, "month": mk}
 
     by_status: Dict[str, int] = {}
-    for row in values:
-        if len(row) > 0 and row[0]:
-            status = str(row[8]) if len(row) > 8 else "未知"
+    for rec in records:
+        f = rec.get("fields", {})
+        date_str = str(f.get("提交日期", ""))
+        if date_str.startswith(mk):
+            status = f.get("状态", "未知")
+            if isinstance(status, list):
+                status = status[0] if status else "未知"
             by_status[status] = by_status.get(status, 0) + 1
 
     return {"total": sum(by_status.values()), "by_status": by_status, "month": mk}
@@ -230,32 +206,15 @@ def get_management_table_url() -> str:
 # ── 与 assistant 项目表同步 ───────────────────────────────────
 
 def sync_to_assistant(info: Dict[str, str], brief_url: str = "") -> Tuple[bool, str]:
-    """将素材需求同步到 assistant 的项目管理表（轻量链接）。"""
+    """将素材需求同步到 assistant 项目管理中心（Bitable 任务表）。"""
     try:
-        from memo.projects import find_project, register_project, PROJECT_HEADERS
-        from core.feishu_client import append_spreadsheet_rows, create_spreadsheet_detail
+        from memo.bitable_hub import ensure_hub, add_task
 
-        project = find_project("素材需求跟踪")
-        if not project:
-            ok, detail = create_spreadsheet_detail(
-                title="📋 素材需求跟踪",
-                headers=PROJECT_HEADERS,
-                rows=[],
-                theme="green",
-            )
-            if not ok:
-                return False, f"创建项目表失败: {detail}"
-            register_project(
-                name="素材需求跟踪",
-                spreadsheet_token=detail["spreadsheet_token"],
-                sheet_id=detail["sheet_id"],
-                url=detail["url"],
-                source="creative",
-                doc_type="素材跟踪",
-            )
-            project = find_project("素材需求跟踪")
-            if not project:
-                return False, "注册项目失败"
+        ensure_hub()
+
+        concept = info.get("concept", "素材需求")
+        brand = info.get("brand", "")
+        project = brand or "素材需求"
 
         stats = get_monthly_stats()
         total = stats["total"]
@@ -264,21 +223,22 @@ def sync_to_assistant(info: Dict[str, str], brief_url: str = "") -> Tuple[bool, 
         if total > 0:
             summary += f"，已完成 {completed} 条（{completed * 100 // total}%）"
 
-        concept = info.get("concept", "素材需求")
-        row = [
-            f"素材需求：{concept[:30]}",
-            "creative bot",
-            info.get("contact", ""),
-            "进行中",
-            "中",
-            info.get("deadline", ""),
-            summary,
-        ]
+        note = summary
+        if brief_url:
+            note += f"\nBrief: {brief_url}"
+        if info.get("budget"):
+            note += f"\n预估预算: {info['budget']}"
 
-        return append_spreadsheet_rows(
-            project["spreadsheet_token"],
-            project["sheet_id"],
-            [row],
+        ok, rid = add_task(
+            project=project,
+            task=f"素材制作：{concept[:50]}",
+            source="creative bot",
+            assignee=info.get("executor", ""),
+            status="待开始",
+            due=info.get("deadline", ""),
+            note=note,
         )
+
+        return ok, rid
     except Exception as e:
         return False, f"同步失败: {e}"

@@ -92,6 +92,22 @@ def add_expense(
         items = _load_expenses()
         items.append(record)
         _save_expenses(items)
+
+    try:
+        from memo.bitable_hub import add_expense_record as _bt_add_expense
+        _bt_add_expense(
+            date=record["date"],
+            category=record.get("category", "其他"),
+            project=record.get("project", ""),
+            description=record.get("description", ""),
+            amount=record["amount"],
+            expense_type=record.get("type", "支出"),
+            payment=record.get("payment", ""),
+            team_code=team_code,
+        )
+    except Exception:
+        pass
+
     return record
 
 
@@ -194,6 +210,7 @@ def create_budget(
     spreadsheet_token: str = "",
     sheet_id: str = "",
     url: str = "",
+    team_code: str = "",
 ) -> Dict[str, Any]:
     """创建项目预算。
 
@@ -208,6 +225,7 @@ def create_budget(
         "spreadsheet_token": spreadsheet_token,
         "sheet_id": sheet_id,
         "url": url,
+        "team_code": team_code,
         "created_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     with _lock:
@@ -215,6 +233,20 @@ def create_budget(
         budgets = [b for b in budgets if _normalize_name(b["project"]) != _normalize_name(project)]
         budgets.append(budget)
         _save_budgets(budgets)
+
+    try:
+        from memo.bitable_hub import add_budget_item as _bt_add_budget
+        for it in items:
+            _bt_add_budget(
+                project=project.strip(),
+                name=it.get("name", ""),
+                category=it.get("category", "其他"),
+                amount=float(it.get("budget", 0)),
+                team_code=team_code,
+            )
+    except Exception:
+        pass
+
     return budget
 
 
@@ -319,6 +351,7 @@ def add_goal(
     target: str,
     unit: str = "",
     deadline: str = "",
+    team_code: str = "",
 ) -> Dict[str, Any]:
     """为项目添加目标/KPI。"""
     goal = {
@@ -330,12 +363,26 @@ def add_goal(
         "unit": unit.strip(),
         "deadline": deadline.strip(),
         "status": "进行中",
+        "team_code": team_code,
         "created_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     with _lock:
         goals = _load_goals()
         goals.append(goal)
         _save_goals(goals)
+
+    try:
+        from memo.bitable_hub import add_or_update_kpi as _bt_kpi
+        _bt_kpi(
+            project=goal["project"], name=goal["name"],
+            target=goal["target"], current="0",
+            unit=goal.get("unit", ""), deadline=goal.get("deadline", ""),
+            status="进行中",
+            team_code=team_code,
+        )
+    except Exception:
+        pass
+
     return goal
 
 
@@ -350,6 +397,16 @@ def update_goal(goal_id: str, current: Optional[str] = None, status: Optional[st
                 if status is not None:
                     g["status"] = status.strip()
                 _save_goals(goals)
+                try:
+                    from memo.bitable_hub import add_or_update_kpi as _bt_kpi
+                    _bt_kpi(
+                        project=g["project"], name=g["name"],
+                        target=g["target"], current=g.get("current", ""),
+                        unit=g.get("unit", ""), status=g.get("status", "进行中"),
+                        team_code=g.get("team_code", ""),
+                    )
+                except Exception:
+                    pass
                 return True, f"已更新：{g['name']} → {g.get('current','')}/{g['target']}"
         return False, "未找到该目标"
 

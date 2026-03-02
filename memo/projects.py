@@ -85,6 +85,23 @@ def register_project(
         items = _load()
         items.append(project)
         _save(items)
+
+    try:
+        from memo.bitable_hub import add_project as _bt_add_project, get_hub_url
+        _bt_add_project(name=name.strip(), owner=created_by, team_code=team_code)
+        bitable_url = get_hub_url(team_code=team_code)
+        if bitable_url:
+            project["bitable_url"] = bitable_url
+            with _lock:
+                all_items = _load()
+                for it in all_items:
+                    if it["id"] == project["id"]:
+                        it["bitable_url"] = bitable_url
+                        break
+                _save(all_items)
+    except Exception:
+        pass
+
     return project["id"]
 
 

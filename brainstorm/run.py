@@ -36,11 +36,39 @@ try:
 except ImportError:
     pass
 
+import re as _re
 from core.feishu_webhook import send_text, _send_card
 import os as _os
 from core.llm import chat_completion, get_model_for_role
 from core.utils import load_context, run_timestamp, save_session, truncate_for_display
 from skills import load_context as load_skill_context
+
+
+def _format_discussion_for_readability(text: str) -> str:
+    """提升讨论内容可读性：在逻辑分段前插入空行，便于扫读。"""
+    if not text or not text.strip():
+        return text
+    lines = text.rstrip().split("\n")
+    out = []
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        # 新逻辑块开头：前一行非空则先加空行
+        is_section_start = (
+            stripped.startswith("对于")
+            or stripped.startswith("还有")
+            or stripped.startswith("另外")
+            or stripped.startswith("→")
+            or _re.match(r"^(保留|淘汰)[：:]", stripped)
+            or stripped.startswith("同意")
+            or stripped.startswith("我同意")
+            or _re.match(r"^方向[一二三四五六七八九十\d]+", stripped)
+            or (_re.match(r"^\*\*", stripped) and i > 0)
+        )
+        if is_section_start and out and out[-1].strip():
+            out.append("")
+        out.append(line)
+    return "\n".join(out)
+
 
 def _send_brainstorm_card(title: str, content: str, color: str = "blue", webhook_override: Optional[str] = None) -> bool:
     # 优先使用调用方传入的 webhook（脑暴机器人 vs 自媒体助手 分群推送）
@@ -450,10 +478,22 @@ _QUALITY_GATE_SYSTEM = """你是脑暴质量关卡评审员（Quality Gate Criti
 - 不要解释评审标准，直接给结论"""
 
 _QUALITY_GATE_R1_EXTRA = """
+注意：第一轮是发散轮，评审标准比第二轮宽松。
+不要用第二轮的「体验完整性」「传播路径」等标准来评判第一轮——第一轮的想法允许粗糙、不完整。
+
+第一轮的评审标准（只看两点）：
+1. 具体性：能不能说清谁、在哪、做什么？（纯抽象概念 = 水货）
+2. 有趣度：这个想法是否让人想了解更多？有没有意外感或新鲜感？（无聊的正确 = 水货）
+
+标记格式调整：
+⭐ [方向名称]：亮点方向 — [一句话说清为什么有趣]
+🔸 [方向名称]：有潜力但需具体化 — [缺什么]
+⚠️ [方向名称]：水货 — [一句话原因]
+
 轮次专用行动指令模板（第一轮 → 第二轮可以发散新想法）：
-- 过关数 ≥ 4：下一轮聚焦打磨 [过关方向]，直接淘汰 [水货方向]。
-- 过关数 1-3：下一轮必须做两件事——(1) 打磨这几个过关方向 (2) 针对水货方向的失败原因，提出全新替代方向（不是修修补补，是重新想）。
-- 过关数 = 0：上一轮全军覆没。下一轮必须回到原点重新发散，不要在上一轮的框架里打转。重点反思：上一轮为什么全是水货？是主题理解偏了，还是思路被某个套路带跑了？从用户真实痛点重新出发。"""
+- 亮点方向多（⭐ ≥ 4）：下一轮聚焦打磨这些亮点方向。
+- 亮点方向少（⭐ 1-3）：下一轮打磨亮点 + 把🔸方向具体化 + 针对水货方向的失败原因想替代方向。
+- 亮点方向 = 0：思路可能太窄了。下一轮从不同角度重新发散，不要在上一轮的框架里打转。"""
 
 _QUALITY_GATE_R2_EXTRA = """
 额外要求（第二轮专用）：
@@ -591,9 +631,29 @@ def run_round(
             "聚焦：每个方向的具体行动计划——第一步做什么、什么时候做、怎么知道有没有效、卡住了怎么办。"
         )
 
-    if is_v3 and round_num in (1, 2):
+    if is_v3 and round_num == 1:
         parts.append(
-            "【反面案例——以下是典型的水货思路，你必须主动避开】\n"
+            "【第一轮特别规则——先发散，不要自我审查】\n"
+            "本轮目标是尽可能多样地探索创意空间。暂时不要用三道筛（新颖性/行为改变/传播动机）过滤自己的想法——那是第三轮的事。\n"
+            "第一轮的唯一标准：这个想法是否具体（说得清谁、在哪、做什么）且有趣（让人想了解更多）。\n"
+            "模糊的抽象概念仍然不行（如「沉浸式体验」「O2O闭环」），但具体的、意想不到的想法即使看起来不完美也要提出来。"
+        )
+        parts.append(
+            "【创意灵感——试试从这些角度想，不要只从一个角度发散】\n"
+            "→ 反差/意外组合：把不该出现在一起的东西放在一起（如漫展上出现机器人 cosplayer、菜市场里开音乐会）\n"
+            "→ 身份反转：让参与者扮演一个他们平时不会扮演的角色\n"
+            "→ 感官剥夺或放大：去掉一种感官（蒙眼晚餐）或极端放大一种（巨型装置/微缩世界）\n"
+            "→ 时间操控：快进、慢放、穿越——让参与者体验不同的时间感\n"
+            "→ 秘密/发现：只有少数人知道的隐藏体验，发现后会忍不住分享\n"
+            "→ 共创/留痕：参与者亲手做出的东西会留下来，成为下一个人体验的一部分\n"
+            "→ 日常入侵：在完全意想不到的日常场景中突然出现的体验（地铁里、外卖包装上、电梯里）\n"
+            "→ 游戏化挑战：有明确规则、有胜负、有奖励的短时间挑战\n"
+            "→ 情感链接：让陌生人之间产生真实的情感连接的机制\n"
+            "不需要用到所有角度，但不要所有人都从同一个角度想。"
+        )
+    elif is_v3 and round_num == 2:
+        parts.append(
+            "【反面案例——以下是典型的水货思路，在具体化体验时必须避开】\n"
             "❌「打造沉浸式 XX 体验空间」— 万金油概念，换个品牌也能说，没有具体的峰值瞬间\n"
             "❌「推出限定联名周边/盲盒」— 近两年被做烂了，零新颖性\n"
             "❌「设置互动打卡墙/拍照装置」— 流量逻辑而非体验逻辑，参与者拍完就忘\n"
@@ -662,7 +722,8 @@ def run_round(
         except Exception as e:
             print(f"    [{idx}/{n_roles}] {cn_name} LLM 调用失败: {e}", flush=True)
             raw = "(该角色暂时无法发言)"
-        display = truncate_for_display(raw)
+        raw_display = truncate_for_display(raw)
+        display = _format_discussion_for_readability(raw_display)
         messages_this_round.append((role, display))
 
         round_label = f"第{round_num}轮 {round_name}" if is_v3 else f"Round {round_num}"
@@ -842,6 +903,8 @@ def run_brainstorm(
             session_lines.append(f"### {cn_name}（{cn_role}）| {round_label}")
             session_lines.append("")
             session_lines.append(msg)
+            session_lines.append("")
+            session_lines.append("---")
             session_lines.append("")
         session_lines.append("### 第" + str(round_num) + "轮 Summary")
         session_lines.append("")

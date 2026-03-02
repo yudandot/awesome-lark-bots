@@ -46,9 +46,6 @@ from core.feishu_client import (
     send_message_to_user, send_card_to_user,
     get_primary_calendar_id,
     create_calendar_event,
-    create_spreadsheet_with_data,
-    create_spreadsheet_detail,
-    append_spreadsheet_rows,
     get_minutes_info,
     extract_minute_token,
     create_task,
@@ -57,7 +54,12 @@ from core.feishu_client import (
 from core.cards import make_card, welcome_card, action_card, help_card, error_card, progress_card
 from core.llm import chat
 from memo.intent import parse_intent
-from memo.boards import register_board, find_board
+from memo.bitable_board import (
+    ensure_board as ensure_bitable_board,
+    refresh_board as bitable_refresh_board,
+    append_board_record as bitable_append_record,
+    get_board_url as get_bitable_board_url,
+)
 from memo.projects import (
     register_project, list_projects as store_list_projects,
     find_project, PROJECT_HEADERS,
@@ -79,7 +81,6 @@ from memo.store import (
     complete_memo_by_content as store_complete_by_content,
     list_threads as store_list_threads,
     thread_summary as store_thread_summary,
-    export_board_data,
     get_due_reminders,
     mark_reminder_sent,
     MEMO_CATEGORY_DISPLAY,
@@ -175,19 +176,18 @@ def _parse_memo_content_and_category(text: str) -> tuple[str, Optional[str]]:
 
 
 def _auto_append_board(thread: str, content: str, status: str = "⬜ 进行中"):
-    """备忘添加后自动追加到已注册的线程看板（静默失败）。"""
+    """备忘添加后自动追加到备忘看板 Bitable（静默失败）。"""
     if not thread:
-        return
-    board = find_board(thread)
-    if not board:
         return
     try:
         from datetime import datetime as _dt
         created = _dt.utcnow().strftime("%Y-%m-%d")
-        append_spreadsheet_rows(
-            board["spreadsheet_token"],
-            board["sheet_id"],
-            [[thread, content[:120], status, created, "今日新增"]],
+        bitable_append_record(
+            thread=thread,
+            content=content[:120],
+            status=status,
+            created=created,
+            partition="今日新增",
         )
     except Exception:
         pass
@@ -491,6 +491,17 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
             if _team_result:
                 return
 
+            # ── 当前团队码（用于 Bitable 多租户隔离）──
+            _current_team_code = ""
+            if user_open_id:
+                try:
+                    from core.team import get_current_team as _gct
+                    _ct = _gct(user_open_id)
+                    if _ct:
+                        _current_team_code = _ct.get("code", "")
+                except Exception:
+                    pass
+
             # ── 等待输入状态处理（多步流程）──
             _user_key = user_open_id or mid
             _ps = _get_pending(_user_key)
@@ -523,7 +534,7 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
 
                     _clear_pending(_user_key)
                     from memo.finance import create_budget as fin_create_budget
-                    budget = fin_create_budget(proj_name, budget_items)
+                    budget = fin_create_budget(proj_name, budget_items, team_code=_current_team_code)
                     total = budget.get("total_budget", 0)
                     item_lines = [f"- {it['name']}: ¥{it['budget']:,.0f}" for it in budget_items]
                     reply_card(mid, action_card(
@@ -538,7 +549,7 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                     proj_name = _ps.get("project", "")
                     _clear_pending(_user_key)
                     from memo.finance import add_goal as fin_add_goal
-                    goal = fin_add_goal(proj_name, t, "100", "%")
+                    goal = fin_add_goal(proj_name, t, "100", "%", team_code=_current_team_code)
                     reply_card(mid, action_card(
                         f"🎯 目标已创建 — {proj_name}",
                         f"**{t}**（目标 100%）",
@@ -559,6 +570,7 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                         amount=amt, description=desc,
                         expense_type=exp_type, project=proj_tag,
                         user_open_id=user_open_id or "",
+                        team_code=_current_team_code,
                     )
                     tag_info = f"　#{proj_tag}" if proj_tag else ""
                     reply_card(mid, action_card(
@@ -1088,73 +1100,39 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                 title = f"📋 线程看板 — #{thread_filter}" if thread_filter else "📋 线程看板"
                 reply_card(mid, progress_card("正在生成看板", title, color="blue"))
                 try:
-                    headers, rows, board_stats = export_board_data(
+                    ok_b, url_or_err, board_stats = bitable_refresh_board(
                         user_open_id=user_open_id,
                         thread=thread_filter or None,
                     )
-                    if not rows:
+                    if not ok_b:
+                        _log(f"看板刷新失败: {url_or_err}")
+                        reply_card(mid, error_card("生成看板失败", "操作失败，请稍后重试。"))
+                        return
+
+                    if not board_stats or sum(board_stats.values()) == 0:
                         hint = f"线程 #{thread_filter} 下没有备忘" if thread_filter else "还没有备忘数据"
                         reply_card(mid, action_card("📋 看板为空", hint,
                             hints=["发「备忘 xxx #线程」添加内容", "发「线程」查看现有线程"],
                             color="blue"))
                         return
 
+                    board_url = url_or_err or get_bitable_board_url()
                     _stats_line = (
-                        f"今日新增 {board_stats['today']} 条 | "
-                        f"本周进行中 {board_stats['week']} 条 | "
-                        f"等待跟进 {board_stats['stale']} 条 | "
-                        f"已完成 {board_stats['done']} 条"
+                        f"今日新增 {board_stats.get('today', 0)} 条 | "
+                        f"本周进行中 {board_stats.get('week', 0)} 条 | "
+                        f"等待跟进 {board_stats.get('stale', 0)} 条 | "
+                        f"已完成 {board_stats.get('done', 0)} 条"
                     )
 
-                    existing = find_board(thread_filter) if thread_filter else None
-                    if existing:
-                        ok_a, msg_a = append_spreadsheet_rows(
-                            existing["spreadsheet_token"],
-                            existing["sheet_id"],
-                            rows,
-                        )
-                        if ok_a:
-                            reply_card(mid, action_card(
-                                "📋 线程看板已更新",
-                                f"**{title}**\n\n"
-                                f"[点击打开表格]({existing['url']})\n\n"
-                                f"{_stats_line}",
-                                hints=["新增备忘会自动追加到此看板", "发「看板」可重新刷新"],
-                                color="green",
-                            ))
-                        else:
-                            _log(f"更新看板失败: {msg_a}")
-                            reply_card(mid, error_card("更新看板失败，正在重新创建", "操作失败，请稍后重试。"))
-                            existing = None
-
-                    if not existing:
-                        ok, detail = create_spreadsheet_detail(
-                            title=title, headers=headers, rows=rows,
-                            owner_open_id=user_open_id, theme="blue",
-                            partition_col=4,
-                        )
-                        if ok:
-                            if thread_filter:
-                                register_board(
-                                    thread=thread_filter,
-                                    spreadsheet_token=detail["spreadsheet_token"],
-                                    sheet_id=detail["sheet_id"],
-                                    url=detail["url"],
-                                    user_open_id=user_open_id or "",
-                                )
-                            reply_card(mid, action_card(
-                                "📋 线程看板已生成",
-                                f"**{title}**\n\n"
-                                f"[点击打开表格]({detail['url']})\n\n"
-                                f"{_stats_line}"
-                                + ("\n\n新增备忘会自动追加到此看板" if thread_filter else ""),
-                                hints=["数据来自你的备忘，可在飞书中编辑", "再发「看板」可刷新"],
-                                color="green",
-                            ))
-                        else:
-                            err_msg = detail.get("error", str(detail)) if isinstance(detail, dict) else str(detail)
-                            _log(f"生成看板失败: {err_msg}")
-                            reply_card(mid, error_card("生成看板失败", "操作失败，请稍后重试。"))
+                    reply_card(mid, action_card(
+                        "📋 线程看板已刷新",
+                        f"**{title}**\n\n"
+                        f"[点击打开看板]({board_url})\n\n"
+                        f"{_stats_line}"
+                        + ("\n\n新增备忘会自动追加到此看板" if thread_filter else ""),
+                        hints=["数据来自你的备忘，可在飞书中编辑", "再发「看板」可刷新"],
+                        color="green",
+                    ))
                 except Exception as e:
                     _log(f"生成线程看板失败: {e}\n{traceback.format_exc()}")
                     reply_card(mid, error_card("生成看板失败", "操作失败，请稍后重试。"))
@@ -1168,49 +1146,45 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                     return
                 existing = find_project(proj_name)
                 if existing:
+                    _url = existing.get("bitable_url") or existing.get("url", "")
                     reply_card(mid, action_card(
                         "📋 项目已存在",
-                        f"**{existing['name']}**\n[打开表格]({existing['url']})",
+                        f"**{existing['name']}**\n[打开项目管理中心]({_url})",
                         hints=[f"直接说「{existing['name']} 加任务 xxx」添加内容"],
                         color="blue",
                     ))
                     return
                 reply_card(mid, progress_card("正在创建项目", f"**{proj_name}**", color="blue"))
                 try:
-                    ok, info = create_spreadsheet_detail(
-                        title=f"📋 {proj_name}",
-                        headers=PROJECT_HEADERS,
-                        rows=[],
-                        owner_open_id=user_open_id,
+                    from memo.bitable_hub import ensure_hub
+                    ensure_hub(team_code=_current_team_code)
+                    register_project(
+                        name=proj_name,
+                        spreadsheet_token="",
+                        sheet_id="",
+                        url="",
+                        created_by=user_open_id or "",
+                        team_code=_current_team_code,
                     )
-                    if ok:
-                        register_project(
-                            name=proj_name,
-                            spreadsheet_token=info["spreadsheet_token"],
-                            sheet_id=info["sheet_id"],
-                            url=info["url"],
-                            created_by=user_open_id or "",
-                        )
-                        _user_key = user_open_id or mid
-                        _set_pending(_user_key, "awaiting_budget_items", project=proj_name)
-                        reply_card(mid, action_card(
-                            "📋 项目已创建",
-                            f"**{proj_name}**\n\n"
-                            f"[点击打开表格]({info['url']})\n\n"
-                            "**接下来设置预算**（每行：类别 金额）：\n"
-                            "> 营销 50000\n"
-                            "> 设计 10000\n"
-                            "> 差旅 5000\n\n"
-                            "直接发送预算项，或发「取消」跳过。",
-                            hints=[
-                                f"「{proj_name} 加任务 xxx」添加任务",
-                                "发飞书妙记链接可直接归档",
-                            ],
-                            color="green",
-                        ))
-                    else:
-                        _log(f"创建项目失败: {info}")
-                        reply_card(mid, error_card("创建项目失败", "操作失败，请稍后重试。"))
+                    proj = find_project(proj_name)
+                    hub_url = (proj or {}).get("bitable_url", "")
+                    _user_key = user_open_id or mid
+                    _set_pending(_user_key, "awaiting_budget_items", project=proj_name)
+                    reply_card(mid, action_card(
+                        "📋 项目已创建",
+                        f"**{proj_name}**\n\n"
+                        + (f"[打开项目管理中心]({hub_url})\n\n" if hub_url else "")
+                        + "**接下来设置预算**（每行：类别 金额）：\n"
+                        "> 营销 50000\n"
+                        "> 设计 10000\n"
+                        "> 差旅 5000\n\n"
+                        "直接发送预算项，或发「取消」跳过。",
+                        hints=[
+                            f"「{proj_name} 加任务 xxx」添加任务",
+                            "发飞书妙记链接可直接归档到资料库",
+                        ],
+                        color="green",
+                    ))
                 except Exception as e:
                     _log(f"创建项目失败: {e}\n{traceback.format_exc()}")
                     reply_card(mid, error_card("创建项目失败", "操作失败，请稍后重试。"))
@@ -1228,12 +1202,17 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                     ))
                     return
                 lines = []
+                from memo.bitable_hub import get_hub_url as _get_hub_url
+                _hub = _get_hub_url(team_code=_current_team_code)
                 for i, p in enumerate(projects, 1):
-                    lines.append(f"{i}. **{p['name']}**　[打开]({p['url']})　_{p['created_at'][:10]}_")
+                    _purl = p.get("bitable_url") or p.get("url", "")
+                    lines.append(f"{i}. **{p['name']}**　_{p['created_at'][:10]}_")
+                if _hub:
+                    lines.append(f"\n[打开项目管理中心]({_hub})")
                 reply_card(mid, action_card(
                     f"📋 项目列表（{len(projects)} 个）",
                     "\n".join(lines),
-                    hints=["「项目名 加任务 xxx」添加内容", "发妙记链接可归档到项目"],
+                    hints=["「项目名 加任务 xxx」添加内容", "发妙记链接可归档到资料库"],
                     color="blue",
                 ))
                 return
@@ -1254,22 +1233,25 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                     ))
                     return
                 try:
+                    from memo.bitable_hub import add_task as _bt_add_task, get_hub_url
                     assignee = ""
                     import re as _re
                     m_at = _re.search(r"[@＠]([\w\u4e00-\u9fff]+)", task_text)
                     if m_at:
                         assignee = m_at.group(1)
                         task_text = task_text[:m_at.start()].strip()
-                    row = [task_text, "手动添加", assignee, "待开始", "", "", ""]
-                    ok, msg = append_spreadsheet_rows(
-                        proj["spreadsheet_token"], proj["sheet_id"], [row],
+                    ok, msg = _bt_add_task(
+                        project=proj["name"], task=task_text,
+                        source="手动添加", assignee=assignee,
+                        team_code=_current_team_code,
                     )
+                    hub_url = proj.get("bitable_url") or get_hub_url(team_code=_current_team_code)
                     if ok:
                         reply_card(mid, action_card(
                             "✅ 任务已添加",
                             f"**{proj['name']}** ← {task_text}"
                             + (f"\n负责人：{assignee}" if assignee else ""),
-                            hints=[f"[打开表格]({proj['url']})"],
+                            hints=[f"[打开项目管理中心]({hub_url})"] if hub_url else [],
                             color="green",
                         ))
                     else:
@@ -1320,16 +1302,24 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                         suggestions=[f"先「创建项目 {proj_name}」"]))
                     return
                 try:
-                    row = [minutes_title, f"飞书妙记 {minutes_dur}", "", "待整理", "", "", minutes_url]
-                    ok2, msg = append_spreadsheet_rows(
-                        proj["spreadsheet_token"], proj["sheet_id"], [row],
+                    from memo.bitable_hub import add_resource as _bt_add_resource, get_hub_url
+                    note = f"时长：{minutes_dur}" if minutes_dur else ""
+                    ok2, msg = _bt_add_resource(
+                        project=proj["name"],
+                        name=minutes_title,
+                        res_type="飞书妙记",
+                        link=minutes_url,
+                        source="自动记录",
+                        note=note,
+                        team_code=_current_team_code,
                     )
+                    hub_url = proj.get("bitable_url") or get_hub_url(team_code=_current_team_code)
                     if ok2:
                         reply_card(mid, action_card(
-                            "✅ 妙记已归档",
+                            "✅ 妙记已归档到资料库",
                             f"**{minutes_title}** → {proj['name']}\n\n"
-                            f"[打开项目表]({proj['url']})\n\n"
-                            f"粘贴会议纪要内容，我可以自动提取 action items",
+                            + (f"[打开项目管理中心]({hub_url})\n\n" if hub_url else "")
+                            + "粘贴会议纪要内容，我可以自动提取 action items",
                             color="green",
                         ))
                     else:
@@ -1402,35 +1392,40 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                             color="blue",
                         ))
                         return
-                    rows = []
+                    from memo.bitable_hub import add_task as _bt_add_task, get_hub_url
+                    success_count = 0
                     for it in items:
-                        rows.append([
-                            it.get("task", ""),
-                            it.get("source", "导入"),
-                            it.get("assignee", ""),
-                            it.get("status", "待开始"),
-                            it.get("priority", ""),
-                            it.get("due", ""),
-                            it.get("note", ""),
-                        ])
-                    ok2, msg = append_spreadsheet_rows(
-                        proj["spreadsheet_token"], proj["sheet_id"], rows,
-                    )
-                    if ok2:
-                        preview = rows[:10]
-                        task_list = "\n".join(
-                            f"- {r[0]}" + (f"（{r[2]}）" if r[2] else "")
-                            for r in preview
+                        _ok, _ = _bt_add_task(
+                            project=proj["name"],
+                            task=it.get("task", ""),
+                            source=it.get("source", "导入"),
+                            assignee=it.get("assignee", ""),
+                            status=it.get("status", "待开始"),
+                            priority=it.get("priority", ""),
+                            due=it.get("due", ""),
+                            note=it.get("note", ""),
+                            team_code=_current_team_code,
                         )
-                        if len(rows) > 10:
-                            task_list += f"\n- …还有 {len(rows) - 10} 条"
+                        if _ok:
+                            success_count += 1
+                    hub_url = proj.get("bitable_url") or get_hub_url(team_code=_current_team_code)
+                    if success_count > 0:
+                        preview = items[:10]
+                        task_list = "\n".join(
+                            f"- {it.get('task', '')}"
+                            + (f"（{it.get('assignee', '')}）" if it.get("assignee") else "")
+                            for it in preview
+                        )
+                        if len(items) > 10:
+                            task_list += f"\n- …还有 {len(items) - 10} 条"
                         reply_card(mid, action_card(
-                            f"✅ 已导入 {len(rows)} 条到 {proj['name']}",
-                            f"{task_list}\n\n[打开项目表]({proj['url']})",
+                            f"✅ 已导入 {success_count} 条到 {proj['name']}",
+                            task_list
+                            + (f"\n\n[打开项目管理中心]({hub_url})" if hub_url else ""),
                             color="green",
                         ))
                     else:
-                        _log(f"导入内容写入失败: {msg}")
+                        _log("导入内容写入失败: 所有记录写入 Bitable 失败")
                         reply_card(mid, error_card("写入失败", "操作失败，请稍后重试。"))
                 except Exception as e:
                     _log(f"导入内容失败: {e}\n{traceback.format_exc()}")
@@ -1469,6 +1464,7 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                     amount=amt, description=desc,
                     expense_type=exp_type, project=proj_tag,
                     user_open_id=user_open_id or "",
+                    team_code=_current_team_code,
                 )
                 tag_info = f"　#{proj_tag}" if proj_tag else ""
                 reply_card(mid, action_card(
@@ -1534,6 +1530,7 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                             date=it.get("date", ""),
                             expense_type=it.get("type", "支出"),
                             user_open_id=user_open_id or "",
+                            team_code=_current_team_code,
                         )
                         records.append(r)
                     if not records:
@@ -1581,6 +1578,10 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                         lines.append("\n**按项目：**")
                         for proj, val in summary["by_project"].items():
                             lines.append(f"- {proj}　¥{val:,.0f}")
+                    from memo.bitable_hub import get_hub_url as _get_hub_url
+                    _hub = _get_hub_url(team_code=_current_team_code)
+                    if _hub:
+                        lines.append(f"\n[打开项目管理中心]({_hub})")
                     reply_card(mid, action_card(
                         f"💰 {summary['month']} 月度花费",
                         "\n".join(lines),
@@ -1663,7 +1664,7 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                 if not proj_name or not goal_name or not target:
                     reply_message(mid, "格式：Q2营销 设目标 新增用户 10000 人")
                     return
-                goal = add_goal(proj_name, goal_name, target, unit)
+                goal = add_goal(proj_name, goal_name, target, unit, team_code=_current_team_code)
                 reply_card(mid, action_card(
                     "🎯 目标已设定",
                     f"**{proj_name}**\n{goal_name}：{target}{unit}\n\n"
@@ -1713,8 +1714,10 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                     lines.append("|------|------|------|------|------|------|")
                     for r in rows:
                         lines.append(f"| {r[0]} | {r[1]} | {r[2]} | {r[3]} | {r[4]} | {r[5]} |")
+                    from memo.bitable_hub import get_hub_url as _get_hub_url
                     proj = find_project(proj_name)
-                    proj_link = f"\n\n[打开项目表]({proj['url']})" if proj else ""
+                    _hub = (proj.get("bitable_url") if proj else None) or _get_hub_url(team_code=_current_team_code)
+                    proj_link = f"\n\n[打开项目管理中心]({_hub})" if _hub else ""
                     reply_card(mid, action_card(
                         f"📊 {proj_name} 总览",
                         "\n".join(lines) + proj_link,
@@ -1823,70 +1826,67 @@ def _handle_message_read(_data) -> None:
 
 def _welcome() -> dict:
     return make_card("小助手", [
-        {"text": "像发消息一样告诉我你要做什么。以下是常用指令："},
+        {"text": "直接跟我说你想做什么就行。下面按功能列了常用说法，照着说即可："},
         {"divider": True},
         {"text": (
-            "**记备忘**\n"
-            "`备忘 下周交报告 #工作`\n"
-            "多条可以换行或分号分隔，会自动拆开\n"
+            "**1️⃣ 备忘**\n"
+            "· 记一条：`备忘 下周交报告 #工作`（多条可换行或分号分隔）\n"
+            "· 完成/删除：`完成 1`、`删掉 交报告`（按序号或内容都行）\n"
+            "· 看列表：发 `线程` 看所有工作线，发 `看板` 导出到飞书表格"
         )},
+        {"divider": True},
         {"text": (
-            "**管理备忘**\n"
-            "`完成 1`　`删除 1`　按序号操作\n"
-            "`做完了 交报告`　`删掉 交报告`　按内容操作\n"
-            "`线程`　查看所有工作线　　`看板`　导出到飞书表格\n"
+            "**2️⃣ 项目 & 记账**\n"
+            "· 建项目：`创建项目 Q2营销`（会引导设预算，统一管理在多维表格中）\n"
+            "· 记一笔花费：`记账 午餐 35` 或 `记账 午餐 35 #Q2营销`\n"
+            "· 看汇总：`本月花费`、`Q2营销 总览`"
         )},
+        {"divider": True},
         {"text": (
-            "**项目 & 财务**\n"
-            "`创建项目 Q2营销`　建表并引导设预算\n"
-            "`记账 午餐 35`　记一笔花费\n"
-            "`本月花费`　`Q2营销 总览`　查看汇总\n"
+            "**3️⃣ 联网研究**\n"
+            "· 深度调研：`研究 XX 的增长策略`（多来源搜索 + 结构化报告）\n"
+            "· 事实核查：`fact check 某条说法`"
         )},
+        {"divider": True},
         {"text": (
-            "**其他**\n"
-            "`研究 XX 的增长策略`　联网深度研究\n"
-            "`明天下午3点开会`　加入飞书日历\n"
-            "`周报`　`月报`　自动生成报告\n"
+            "**4️⃣ 日报·周报·月报**\n"
+            "· 每天 08:00 自动发晨报、18:00 发收尾提醒\n"
+            "· 发 `周报` 本周汇总、`月报` 全维度月度总结"
         )},
-        {"note": "发「帮助」查看完整指令 · 说其他话我会当聊天回复"},
+        {"divider": True},
+        {"note": "发「帮助」可看完整指令列表 · 其他话我会当聊天回复"},
     ], color="turquoise")
 
 
 def _help() -> dict:
     return help_card("小助手", [
-        ("备忘",
-         "`备忘 内容 #标签` — 记一条，标签可选\n"
-         "多条换行或分号分隔，自动拆开\n"
-         "`完成 1`  `做完了 交报告`  `第三条完成` — 标记完成\n"
-         "`删除 1`  `删掉 交报告` — 按序号或内容删除\n"
-         "`备忘列表` — 查看未完成　　`线程` — 查看所有工作线"),
-        ("看板",
-         "`看板` — 导出所有线程到飞书表格\n"
-         "`看板 #标签` — 导出指定线程\n"
-         "首次导出后，新增备忘会自动追加到已有表格\n"
-         "表格按「今日新增 / 本周进行中 / 等待跟进 / 已完成」分区"),
-        ("联网研究",
-         "`研究 xxx` — 多来源搜索、交叉验证、输出结构化报告\n"
-         "`fact check xxx` — 针对性事实核查"),
-        ("项目管理",
-         "`创建项目 名称` — 新建飞书项目表，随后引导设预算\n"
-         "`名称 加任务 内容` — 往项目表里加一行\n"
-         "发飞书妙记链接 — 自动归档到项目\n"
-         "粘贴会议纪要 — AI 提取任务并导入\n"
-         "`项目列表`　`名称 总览` — 查看项目"),
-        ("财务",
-         "`记账 描述 金额` — 记一笔，不带项目标签会提示选择\n"
-         "`记账 午餐 35 #Q2营销` — 直接关联项目\n"
-         "粘贴费用表格或清单 — AI 自动逐条识别\n"
-         "`创建预算 名称` — 设置预算项\n"
-         "`本月花费` — 月度汇总　　`名称 预算` — 预算执行对比\n"
-         "`名称 设目标 xxx 数量 单位` — 添加 KPI\n"
-         "`名称 总览` — 预算 + 目标 + 花费全维度"),
-        ("日程 & 报告",
-         "`明天下午3点开会` — 加入飞书日历\n"
-         "`今天` / `明天` — 查看日程\n"
-         "`周报` — 本周工作汇总　　`月报` — 全维度月度总结\n"
-         "每天 08:00 自动推送晨报，18:00 推送收尾提醒"),
+        ("1️⃣ 备忘",
+         "① 记一条：`备忘 内容 #标签`（标签可选，多条用换行或分号分隔）\n"
+         "② 标记完成：`完成 1`、`做完了 交报告`、`第三条完成`\n"
+         "③ 删除：`删除 1`、`删掉 交报告`（按序号或内容）\n"
+         "④ 查看：`备忘列表` 看未完成，`线程` 看所有工作线"),
+        ("2️⃣ 看板",
+         "① `看板` — 导出所有线程到飞书表格\n"
+         "② `看板 #标签` — 只导出指定线程\n"
+         "③ 首次导出后，新备忘会自动追加；表格分区：今日新增 / 本周进行中 / 等待跟进 / 已完成"),
+        ("3️⃣ 联网研究",
+         "① `研究 xxx` — 多来源搜索、交叉验证、输出结构化报告\n"
+         "② `fact check xxx` — 针对性事实核查"),
+        ("4️⃣ 项目管理",
+         "① `创建项目 名称` — 在项目管理中心多维表格中创建，并引导设预算\n"
+         "② `名称 加任务 内容` — 写入任务表\n"
+         "③ 发飞书妙记链接 → 自动归档到资料库；粘贴会议纪要 → AI 提取任务并导入\n"
+         "④ `项目列表`、`名称 总览` — 查看项目"),
+        ("5️⃣ 财务",
+         "① 记一笔：`记账 描述 金额` 或 `记账 午餐 35 #Q2营销`（不带项目会提示选择）\n"
+         "② 粘贴费用表格/清单 — AI 自动逐条识别\n"
+         "③ `创建预算 名称` 设预算项；`本月花费` 月度汇总；`名称 预算` 预算执行对比\n"
+         "④ `名称 设目标 xxx 数量 单位` 添加 KPI；`名称 总览` 预算+目标+花费全维度"),
+        ("6️⃣ 日程 & 日报·周报·月报",
+         "① 加日程：直接说 `明天下午3点开会`，自动加进飞书日历\n"
+         "② 查日程：`今天`、`明天`\n"
+         "③ 自动推送：每天 08:00 晨报、18:00 收尾提醒\n"
+         "④ 手动报告：`周报` 本周汇总，`月报` 全维度月度总结"),
     ], footer="多步流程中发「取消」可退出 · 其他消息当聊天回复")
 
 

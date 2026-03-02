@@ -198,22 +198,25 @@ python3 -m planner.run --topic "Q3 用户增长策略" --mode "快速模式"
 完成 3 / 完成 买牛奶       → 标记完成
 ```
 
-**项目管理（飞书电子表格）：**
+**项目管理（飞书多维表格 Bitable）：**
 ```
-创建项目 Q2营销             → 新建飞书项目表（任务·来源·负责人·状态·优先级·截止·备注）
-Q2营销 加任务 写推广方案    → 往项目表追加一行
-发飞书妙记链接              → 自动归档到项目表
+创建项目 Q2营销             → 自动建多维表格（项目·任务·资料库·花费·预算·KPI 六张表）
+Q2营销 加任务 写推广方案    → 结构化记录：负责人/状态/优先级/截止 均为单选字段
+发飞书妙记链接              → 自动归档到项目资料库表
 项目列表                    → 查看所有项目
 Q2营销 总览                 → 任务 + 预算 + 目标全维度仪表盘
+看板                        → 备忘看板（独立 Bitable，按线程分区）
 ```
+
+> 数据同时写入本地 JSON 和飞书多维表格，支持多租户（team_code 隔离）。
 
 **财务管理：**
 ```
-记账 午餐 35 #Q2营销        → 记一笔支出，带项目标签
+记账 午餐 35 #Q2营销        → 记一笔支出，自动同步到 Bitable 花费记录表
 直接丢费用清单              → AI 自动逐行识别并入账
-创建预算 Q2营销             → 设定各项预算额度
+创建预算 Q2营销             → 设定各项预算额度，同步到 Bitable 预算表
 Q2营销 预算                 → 查看预算 vs 实际执行率
-Q2营销 设目标 新增用户 10000 人  → 设定 KPI 目标
+Q2营销 设目标 新增用户 10000 人  → 设定 KPI，同步到 Bitable KPI 追踪表
 更新目标 新增用户 7500      → 更新进度
 本月花费                    → 按类别+项目的月度汇总
 ```
@@ -237,15 +240,15 @@ fact check Threads 增长是 organic 吗  → 事实核查模式
 - 周一 09:00 周报：线程 + 预算执行 + 目标进度
 - 月度报告：线程 + 项目 + 财务全维度总结（手动触发或定时）
 
-### 4. 创意 Prompt 机器人 (`creative/`)
+### 4. 素材 Bot (`creative/`)
 
-告诉它你想要什么素材，它生成可以直接复制到 AI 工具的 prompt。
+告诉它你想要什么素材，生成 AI 工具可用的 prompt，概念满意后可一键**安排制作**。
 
-**两种使用方式：**
+**三种模式：**
 ```
 直接生成：春日樱花主题的抖音预告               → 立即出 prompt
-先聊后出：聊聊：我想做一个关于重逢的视频       → 多轮讨论
-         生成                                  → 从讨论内容生成正式 prompt
+先聊后出：聊聊：我想做一个关于重逢的视频       → 多轮讨论 → 生成
+安排制作：点击按钮或发「安排制作」             → 生成执行 Brief → 提交到素材管理表
 ```
 
 **修改和品牌切换：**
@@ -260,6 +263,10 @@ fact check Threads 增长是 organic 吗  → 事实核查模式
 - Seedance 英文版（可直接复制粘贴到 AI 工具）
 - 超 15 秒需求自动分镜 + 角色一致性建议
 - 配套平台文案
+
+**素材需求管理（飞书多维表格）：**
+- 执行 Brief 自动生成并写入多维表格（需求编号/品牌/素材类型/渠道/状态/截止日期等结构化字段）
+- 状态字段为单选（待分配/进行中/待审核/已完成/已取消），可直接在飞书中操作
 
 ### 5. 自媒体助手 (`conductor/`)
 
@@ -348,7 +355,7 @@ awesome-lark-bots/
 │
 ├── core/                     # 共享核心模块（所有机器人都用）
 │   ├── llm.py                #   大模型调用封装（DeepSeek/豆包/Kimi）
-│   ├── feishu_client.py      #   飞书 API（消息、日历、文档）
+│   ├── feishu_client.py      #   飞书 API（消息、日历、文档、多维表格 Bitable）
 │   ├── feishu_webhook.py     #   飞书群 Webhook 推送
 │   ├── skill_router.py       #   技能路由器（自动注入领域知识到 prompt）
 │   └── utils.py              #   工具函数（截断、时间戳、文件保存）
@@ -406,8 +413,10 @@ awesome-lark-bots/
 │   ├── store.py              #   备忘本地存储（线程安全，支持 #thread 标签、看板导出）
 │   ├── intent.py             #   意图解析（30+ 指令：备忘/项目/财务/研究/日程）
 │   ├── threads.py            #   线程自动识别（从 personal skill 信号词）
-│   ├── projects.py           #   项目注册表（name → 飞书电子表格 token 映射）
-│   └── finance.py            #   财务管理（记账/预算/目标/月度汇总）
+│   ├── projects.py           #   项目注册表（name → 飞书多维表格 token 映射）
+│   ├── finance.py            #   财务管理（记账/预算/目标/月度汇总，自动同步 Bitable）
+│   ├── bitable_board.py      #   备忘看板（飞书多维表格，按线程分区）
+│   └── bitable_hub.py        #   项目管理中心（飞书多维表格：项目·任务·资料库·花费·预算·KPI）
 │
 ├── cal/                      # 日程模块（助手机器人使用）
 │   ├── aggregator.py         #   多源日程聚合（飞书 + Google + 备忘）
@@ -599,8 +608,8 @@ Most work scenarios don't require handing over all the keys. A chat window + a f
 | **Content Assistant** ⚗️ | End-to-end content pipeline: topic → brainstorm → plan → create → store → publish | `python3 -m conductor` |
 | **Brainstorm** | 5 AI personas simulate a real team discussion in 4 rounds | `python3 -m brainstorm` |
 | **Planner** | 6-step decisions + auto web research + Feishu docs/sheets (Brief / Calendar / Spec, 10 types) | `python3 -m planner` |
-| **Assistant** | Memos + threads, project management (Feishu Sheets), finance (expenses/budgets/goals), web research, daily/weekly/monthly reports | `python3 -m assistant` |
-| **Creative Prompt** | Generate prompts for Seedance / MidJourney / Sora and other AI tools | `python3 -m creative` |
+| **Assistant** | Memos + threads, project management (Feishu Bitable with 6 structured tables), finance tracking (auto-synced to Bitable), web research, daily/weekly/monthly reports | `python3 -m assistant` |
+| **Creative Prompt** | Generate prompts for AI tools + exec brief mode with Bitable asset tracker | `python3 -m creative` |
 | **Sentiment Monitor** | 3-phase pipeline: 15 social platforms + Web Search (Tavily/DDG) for ~1000 posts | `python3 -m sentiment` |
 | **News Digest** | Multi-source news aggregation + AI analysis, daily push | `python3 -m newsbot` |
 
