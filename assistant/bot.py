@@ -152,12 +152,27 @@ def _clear_pending(user_key: str):
 # ── 工具函数 ─────────────────────────────────────────────────
 
 def _extract_text(content: str) -> str:
+    """从飞书消息 content 中提取纯文本。支持普通 text 与 post 富文本格式。"""
     if not content or not content.strip():
         return ""
     try:
         data = json.loads(content)
-        if isinstance(data, dict) and "text" in data:
+        if not isinstance(data, dict):
+            return content.strip()
+        if "text" in data:
             return (data["text"] or "").strip()
+        if "content" in data:
+            parts = []
+            for row in data.get("content") or []:
+                if not isinstance(row, list):
+                    continue
+                for node in row:
+                    if isinstance(node, dict) and node.get("tag") == "text":
+                        t = node.get("text") or ""
+                        if isinstance(t, str) and t.strip():
+                            parts.append(t.strip())
+            if parts:
+                return "\n\n".join(parts)
         return content.strip()
     except (json.JSONDecodeError, TypeError):
         return content.strip()
@@ -480,10 +495,16 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
             # 打招呼 / 问「你能做什么」→ 直接回欢迎卡片（否则会走聊天只回文字）
             _greeting = t.lower().strip()
             if _greeting in ("hi", "hello", "你好", "嗨", "在吗", "在么", "hey"):
-                reply_card(mid, _welcome())
+                _log("发送欢迎卡片(打招呼)")
+                r = reply_card(mid, _welcome())
+                if r and r.get("code") != 0:
+                    _log(f"回复欢迎卡片失败: code={r.get('code')} msg={r.get('msg')}")
                 return
             if _greeting in ("你可以做什么", "你能做什么", "你能干嘛", "有什么功能", "介绍下自己", "你是谁"):
-                reply_card(mid, _welcome())
+                _log("发送欢迎卡片(你能做什么)")
+                r = reply_card(mid, _welcome())
+                if r and r.get("code") != 0:
+                    _log(f"回复欢迎卡片失败: code={r.get('code')} msg={r.get('msg')}")
                 return
 
             # ── 团队指令 ──────────────────────────────────────
@@ -1065,7 +1086,7 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                     reply_card(mid, error_card("月报生成失败", "生成失败，请稍后重试。"))
                 return
 
-            # ── 翻译 ──
+            # ── 翻译 & 英文写作 ──
             if action == "translate":
                 content = (params.get("content") or text).strip()
                 if not content:
@@ -1073,9 +1094,16 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                     return
                 target_lang = (params.get("target_lang") or "").strip()
                 scene = (params.get("scene") or "").strip()
+                mode = (params.get("mode") or "translate").strip()
+                _log(f"翻译请求: mode={mode} target_lang={target_lang} scene={scene} content_len={len(content)}")
                 try:
-                    from skills.translation import TRANSLATE_SYSTEM_PROMPT
-                    system = TRANSLATE_SYSTEM_PROMPT
+                    if mode == "compose":
+                        from skills.translation import COMPOSE_SYSTEM_PROMPT
+                        system = COMPOSE_SYSTEM_PROMPT
+                    else:
+                        from skills.translation import TRANSLATE_SYSTEM_PROMPT
+                        system = TRANSLATE_SYSTEM_PROMPT
+
                     user_parts = []
                     if target_lang:
                         lang_label = "英文" if target_lang == "en" else "中文"
@@ -1084,25 +1112,35 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                         user_parts.append(f"使用场景：{scene}")
                     user_parts.append(f"\n{content}")
                     user_prompt = "\n".join(user_parts)
+
+                    provider = (os.environ.get("TRANSLATE_PROVIDER") or "deepseek").strip().lower()
+                    _log(f"翻译 provider={provider}")
                     result = chat_completion(
-                        provider="deepseek",
+                        provider=provider,
                         system=system,
                         user=user_prompt,
                         temperature=0.4,
                     )
                     if not result:
-                        reply_message(mid, "翻译失败，请稍后重试。")
+                        _log("翻译返回空结果")
+                        reply_card(mid, error_card("翻译失败", "模型返回了空结果，请稍后重试。"))
                         return
+
+                    card_title = "✍️ 英文写作" if mode == "compose" else "🌐 翻译结果"
                     if len(result) > 3500:
                         parts = [result[i:i+3500] for i in range(0, len(result), 3500)]
                         for i, part in enumerate(parts):
-                            title = "🌐 翻译结果" if i == 0 else f"🌐 翻译结果（续 {i+1}）"
+                            title = card_title if i == 0 else f"{card_title}（续 {i+1}）"
                             reply_card(mid, action_card(title, part, color="blue"))
                     else:
-                        reply_card(mid, action_card("🌐 翻译结果", result, color="blue"))
+                        reply_card(mid, action_card(card_title, result, color="blue"))
+                    _log(f"翻译完成: mode={mode} result_len={len(result)}")
                 except Exception as e:
                     _log(f"翻译失败: {e}\n{traceback.format_exc()}")
-                    reply_card(mid, error_card("翻译失败", "翻译失败，请稍后重试。"))
+                    reply_card(mid, error_card(
+                        "翻译失败",
+                        f"请稍后重试。\n\n_(debug: {type(e).__name__}: {str(e)[:100]})_",
+                    ))
                 return
 
             # ── 联网研究 ──
@@ -1818,20 +1856,52 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                 ))
                 return
 
+            # ── 翻译/写英文：优先拦截，不使用意图解析的 reply ──
+            _lower_for_translate = text.lower().strip()
+            _is_translate = any(
+                kw in _lower_for_translate for kw in ("翻译成英文", "帮我翻译", "译成英文", "写英文消息", "帮我写英文", "翻译：", "翻译:")
+            )
+            if _is_translate:
+                _translate_sys = (
+                    "你只做一件事：把用户给的中文内容翻译成英文并输出。\n"
+                    "禁止：说「好的」、说「我来帮你」、加任何中文。\n"
+                    "只输出英文译文，从第一个英文字母开始。"
+                )
+                _content = text
+                for _sep in ("：", ":", "\n"):
+                    if _sep in _content:
+                        _parts = _content.split(_sep, 1)
+                        if len(_parts) == 2 and _parts[0].strip() and any(k in _parts[0] for k in ("翻译", "英文", "写")):
+                            _content = _parts[1].strip()
+                            break
+                try:
+                    reply_text = chat(f"将以下中文翻译成英文，直接输出英文：\n\n{_content}", system_prompt=_translate_sys) or "（翻译失败）"
+                except Exception as e:
+                    _log(f"翻译 LLM 异常: {e}")
+                    reply_text = "（翻译暂时不可用，请稍后再试）"
+                _log(f"翻译回复 长度={len(reply_text)} 预览={reply_text[:80]!r}")
+                reply_message(mid, reply_text[:2000])
+                return
+
             # ── 普通聊天 ──
             if action == "chat" and reply:
                 reply_text = reply
             else:
                 from core.skill_router import enrich_prompt
                 system_prompt = enrich_prompt(
-                    "你是飞书里的备忘与日程助手。可以帮用户记备忘、加日历、查日程。请用简洁友好的中文回复。",
+                    "你是飞书里的备忘与日程助手。主要功能：记备忘、加日历、查日程。"
+                    "同时也可以回答一般问题。直接输出结果，不要先说「好的」「我来帮你」。",
                     user_text=text, bot_type="assistant",
                 )
                 try:
                     reply_text = chat(text, system_prompt=system_prompt) or "（暂无回复）"
-                except Exception:
+                except Exception as chat_err:
+                    _log(f"聊天 LLM 异常: {chat_err}")
                     reply_text = "（AI 暂时不可用，请稍后再试）"
-            reply_message(mid, reply_text[:2000])
+            _log(f"回复用户消息(聊天) 长度={len(reply_text)} 预览={reply_text[:80]!r}...")
+            r = reply_message(mid, reply_text[:2000])
+            if r and r.get("code") != 0:
+                _log(f"回复消息失败: code={r.get('code')} msg={r.get('msg')}")
 
         except Exception as e:
             _log(f"处理异常: {e}\n{traceback.format_exc()}")
@@ -1889,10 +1959,10 @@ def _welcome() -> dict:
         )},
         {"divider": True},
         {"text": (
-            "**4️⃣ 双语翻译**\n"
-            "· `翻译 内容` 自动判断中→英或英→中\n"
-            "· `翻成英文 内容`、`翻成中文 内容` 指定方向\n"
-            "· 支持场景标注：`翻译（PPT）内容`"
+            "**4️⃣ 翻译 & 英文写作**\n"
+            "· 翻译：`翻译 内容`（自动判断方向）\n"
+            "· 写英文：`帮我写英文 要表达的意思`\n"
+            "· 场景适配：`翻译（邮件）内容`"
         )},
         {"divider": True},
         {"text": (
@@ -1919,11 +1989,12 @@ def _help() -> dict:
         ("3️⃣ 联网研究",
          "① `研究 xxx` — 多来源搜索、交叉验证、输出结构化报告\n"
          "② `fact check xxx` — 针对性事实核查"),
-        ("4️⃣ 双语翻译",
-         "① `翻译 内容` — 自动判断中→英或英→中，输出可直接使用的专业版本\n"
+        ("4️⃣ 翻译 & 英文写作",
+         "① `翻译 内容` — 自动判断中→英或英→中，可直接使用的专业版本\n"
          "② 指定方向：`翻成英文 内容`、`翻成中文 内容`\n"
-         "③ 标注场景：`翻译（PPT）内容`、`翻译（邮件）内容`\n"
-         "④ 支持 PPT/邮件/Slack/演讲稿等不同语气自动适配"),
+         "③ 场景适配：`翻译（PPT）内容`、`翻译（邮件）内容`\n"
+         "④ 写英文：`帮我写英文 告诉对方会议推迟` / `帮我用英文回 同意他的方案`\n"
+         "⑤ 支持长文/多段落，直接贴进来即可"),
         ("5️⃣ 项目管理",
          "① `创建项目 名称` — 在项目管理中心多维表格中创建，并引导设预算\n"
          "② `名称 加任务 内容` — 写入任务表\n"
@@ -1989,6 +2060,7 @@ def main():
     os.environ["FEISHU_APP_SECRET"] = app_secret
 
     _log("备忘与日程助手启动")
+    _log(f"飞书应用: app_id 末尾={app_id[-8:] if len(app_id) >= 8 else app_id}（收不到回复时请确认与飞书后台该机器人应用一致）")
     print("=" * 60)
     print("备忘与日程助手（长连接模式）")
     print()

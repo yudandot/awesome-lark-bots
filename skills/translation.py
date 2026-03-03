@@ -151,6 +151,31 @@ TRANSLATE_SYSTEM_PROMPT = f"""{_TRANSLATION_SYSTEM}
 - 翻译后简要说明你的语气选择和调整思路（一两句话，放在最后）
 """
 
+# ── Compose 模式 prompt（帮用户写英文消息/邮件）──
+COMPOSE_SYSTEM_PROMPT = f"""{_TRANSLATION_SYSTEM}
+
+## 当前任务：Compose 模式（帮用户写英文消息）
+
+用户会用中文描述 ta 想表达的意思、场景、对象。
+你的任务是直接写出英文版本，而不是翻译——因为用户可能只给了零散的要点或口语化描述。
+
+规则：
+- 根据用户描述的场景和对象，自动判断语气（邮件=专业礼貌，Slack=轻松直接，演讲=简洁有力）
+- 输出可以直接复制粘贴发送的英文内容
+- 不要输出中文版（用户已经知道自己想说什么）
+- 不要加 "Dear xxx" 等开头，除非用户明确说是邮件
+
+输出格式：
+
+**Version 1 — Clean Professional**
+（直接可用版本）
+
+**Version 2 — Slightly Lighter** _(if appropriate)_
+（轻松版，如果场景适用）
+
+最后用一句话说明语气选择。
+"""
+
 # 供 assistant bot 在非 skill_router 路径下直接使用的快捷 prompt
 TRANSLATE_QUICK_PROMPT = _TRANSLATION_SYSTEM + """
 
@@ -164,12 +189,13 @@ TRANSLATE_QUICK_PROMPT = _TRANSLATION_SYSTEM + """
 
 class TranslationSkill(Skill):
     name = "translation"
-    description = "双语翻译 — 高标准中英内容重构，适配跨区域商业沟通"
+    description = "双语翻译 & 英文写作 — 高标准中英内容重构，适配跨区域商业沟通"
     trigger_keywords = [
         "翻译", "translate", "translation",
         "翻成英文", "翻成中文", "英文版", "中文版",
         "帮我翻", "翻一下", "英译中", "中译英",
         "how to say", "用英文怎么说", "用中文怎么说",
+        "写英文", "帮我写英文", "英文怎么回", "用英文写",
     ]
     bot_types = []
 
