@@ -84,8 +84,10 @@ _MODE_PREFIXES = (
     "执行模式 ", "执行模式：", "执行模式:",
 )
 
+# 比稿触发前缀：带冒号/空格的优先匹配，最后用裸词「比稿」「pitch」兜底（如「比稿618」）
 _PITCH_PREFIXES = (
     "比稿：", "比稿:", "比稿 ", "pitch：", "pitch:", "pitch ",
+    "比稿", "pitch",
 )
 
 
@@ -147,8 +149,9 @@ def _help() -> dict:
          "个人决策类话题不触发搜索"),
         ("🏆 Agency 比稿（营销专属）",
          "做营销方案时，想要多个风格的方案PK？\n"
-         "发「比稿：话题」启动多 Agency 比稿模式：\n"
+         "发「比稿：」后跟完整需求（可多行、可含预算/约束/目标）：\n"
          "> 比稿：618 大促营销方案\n"
+         "> 比稿：洛阳茶馆光遇创作者雅集…（整段需求一条消息发）\n"
          "> 比稿 2组 体验派 增长派：新品上市\n"
          "默认 3 个 Agency（体验派/增长派/品牌派），可自定义\n"
          "流程：独立提案 → 交叉点评 → 裁决融合，约 3-4 分钟"),
@@ -156,12 +159,28 @@ def _help() -> dict:
 
 
 def _extract_text(content: str) -> str:
+    """从飞书消息 content 中提取纯文本。支持普通 text 与 post 富文本格式。"""
     if not content or not content.strip():
         return ""
     try:
         data = json.loads(content)
-        if isinstance(data, dict) and "text" in data:
+        if not isinstance(data, dict):
+            return content.strip()
+        if "text" in data:
             return (data["text"] or "").strip()
+        # 飞书 post 格式：{"title":"","content":[[{"tag":"text","text":"段落1"},...],...]}
+        if "content" in data:
+            parts = []
+            for row in data.get("content") or []:
+                if not isinstance(row, list):
+                    continue
+                for node in row:
+                    if isinstance(node, dict) and node.get("tag") == "text":
+                        t = node.get("text") or ""
+                        if isinstance(t, str) and t.strip():
+                            parts.append(t.strip())
+            if parts:
+                return "\n\n".join(parts)
         return content.strip()
     except (json.JSONDecodeError, TypeError):
         return content.strip()

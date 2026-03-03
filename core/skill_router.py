@@ -30,7 +30,7 @@ _MAX_SKILL_CHARS = 6000
 
 _SKILL_PRIORITY = [
     "decision_frameworks", "thinking_models", "personal",
-    "stakeholder", "cross_cultural",
+    "stakeholder", "cross_cultural", "translation",
     "brand", "platform", "copywriting", "calendar", "marketing",
 ]
 

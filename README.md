@@ -232,6 +232,14 @@ Q2营销 设目标 新增用户 10000 人  → 设定 KPI，同步到 Bitable KP
 本月花费                    → 按类别+项目的月度汇总
 ```
 
+**双语翻译：**
+```
+翻译 我们希望在Q2完成优化        → 自动判断中→英，输出专业版本
+翻成英文 内容 / 翻成中文 content → 指定翻译方向
+翻译（PPT）内容                  → 标注场景，自动适配语气（PPT/邮件/Slack/演讲稿）
+用英文怎么说 xxx                 → 自然语言触发
+```
+
 **联网研究：**
 ```
 研究 Character.ai 增长机制        → 多来源搜索 + 交叉验证 + 结构化报告
@@ -442,18 +450,19 @@ awesome-lark-bots/
 │   └── push_target.py        #   推送接收人管理
 │
 ├── prompts.json              # 脑暴「坚果五仁」角色配置
-├── skills/                    # 共享技能库（9 个技能，自动路由注入 prompt）
+├── skills/                    # 共享技能库（10 个技能，自动路由注入 prompt）
 │   ├── __init__.py            #   Skill 基类 + 注册表 + 自动发现
 │   ├── __main__.py            #   CLI: python3 -m skills list / test / activate
 │   ├── personal.py            #   个人合作风格（加载 profiles/ 下的用户 profile）
 │   ├── decision_frameworks.py #   决策框架（第一性原理、pre-mortem、约束理论等）
 │   ├── stakeholder.py         #   利益相关方对齐（利益地图、提案包装、阻力预判）
 │   ├── cross_cultural.py      #   跨文化策略（高/低语境、本地化层级）
-│   ├── brand.py               #   品牌知识（加载 creative/brands/*.yaml）
+│   ├── translation.py         #   双语翻译（中英内容重构，适配 PPT/邮件/Slack 等场景）
+│   ├── brand.py               #   品牌知识（加载 creative/brands/*.yaml，支持别名自动检测）
 │   ├── marketing.py           #   营销方法论（加载 CN-MKT-Skills/）
 │   ├── platforms.py           #   平台运营指南（加载 platform_guides/）
 │   ├── copywriting.py         #   经典文案框架（AIDA、PAS、FAB 等）
-│   └── calendar.py            #   营销日历（节日、大促、季节性主题）
+│   └── cal_skill.py           #   营销日历（节日、大促、季节性主题）
 │
 ├── CN-MKT-Skills/            # 营销技能知识库（规划机器人可参考）
 ├── briefs/                   # 脑暴主题 brief 文件
@@ -504,7 +513,8 @@ system = enrich_prompt("你是内容助手...", user_text=msg, bot_type="creativ
 | `decision_frameworks` | 第一性原理、pre-mortem、Type 1/2 决策、约束理论、MECE | planner |
 | `stakeholder` | 利益相关方对齐：利益地图、提案包装、阻力预判 | planner（多方信号时） |
 | `cross_cultural` | 跨文化策略：高/低语境、本地化层级、平台生态差异 | planner（全球/海外信号时） |
-| `brand` | 品牌视觉风格、调性、场景（从 `creative/brands/` 加载） | creative / conductor |
+| `translation` | 双语翻译：中英内容重构，适配 PPT/邮件/Slack/演讲稿等场景 | 关键词触发 |
+| `brand` | 品牌视觉风格、调性、场景（从 `creative/brands/` 加载，支持别名自动检测） | creative / conductor |
 | `marketing` | 营销方法论与策略框架（从 `CN-MKT-Skills/` 加载） | planner / conductor |
 | `platform` | 平台运营指南（从 `skills/platform_guides/` 加载） | conductor / planner |
 | `copywriting` | 经典文案框架（AIDA、PAS、FAB 等）+ 内容格式模板 | conductor |
@@ -625,7 +635,7 @@ Most work scenarios don't require handing over all the keys. A chat window + a f
 | **Content Assistant** ⚗️ | End-to-end content pipeline: topic → brainstorm → plan → create → store → publish | `python3 -m conductor` |
 | **Brainstorm** | 5 AI personas simulate a real team discussion in 4 rounds | `python3 -m brainstorm` |
 | **Planner** | 6-step decisions + auto web research + Feishu docs/sheets (10 types) + Agency Pitch mode (parallel proposals → cross-critique → verdict) | `python3 -m planner` |
-| **Assistant** | Memos + threads, project management (Feishu Bitable with 6 structured tables), finance tracking (auto-synced to Bitable), web research, daily/weekly/monthly reports | `python3 -m assistant` |
+| **Assistant** | Memos + threads, project management (Feishu Bitable), finance tracking, bilingual translation (CN↔EN), web research, daily/weekly/monthly reports | `python3 -m assistant` |
 | **Creative Prompt** | Generate prompts for AI tools + exec brief mode with Bitable asset tracker | `python3 -m creative` |
 | **Sentiment Monitor** | 3-phase pipeline: 15 social platforms + Web Search (Tavily/DDG) for ~1000 posts | `python3 -m sentiment` |
 | **News Digest** | Multi-source news aggregation + AI analysis, daily push | `python3 -m newsbot` |
@@ -689,7 +699,8 @@ The router checks **user message keywords** and **bot type** to decide which ski
 | `decision_frameworks` | First principles, pre-mortem, Type 1/2, constraint theory, MECE | planner |
 | `stakeholder` | Stakeholder alignment: interest mapping, framing, resistance bypass | planner (multi-party) |
 | `cross_cultural` | Cross-cultural strategy: high/low context, localization, platform diffs | planner (global) |
-| `brand` | Brand visual style, tone, scenarios | creative / conductor |
+| `translation` | Bilingual translation: CN↔EN content rewriting, adapts to PPT/email/Slack/speech | keyword trigger |
+| `brand` | Brand visual style, tone, scenarios (auto-detects from aliases) | creative / conductor |
 | `marketing` | Marketing methodology & frameworks | planner / conductor |
 | `platform` | Platform operation guides | conductor / planner |
 | `copywriting` | Classic copywriting frameworks (AIDA, PAS, FAB, etc.) | conductor |

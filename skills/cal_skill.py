@@ -7,8 +7,9 @@
 
 数据来源：skills/calendar_data.yaml
 更新方式：每年初更新一次，或随时添加品牌专属节点。
-"""
 
+模块名用 cal_skill 避免与标准库 calendar 冲突（如容器内 path 导致 shadow）。
+"""
 from __future__ import annotations
 
 import datetime

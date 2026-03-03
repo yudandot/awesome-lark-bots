@@ -33,9 +33,12 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BRANDS_DIR = _PROJECT_ROOT / "creative" / "brands"
 
 _BRAND_KEYWORDS: dict[str, list[str]] = {
-    # ⚠️ 示例：请替换为你自己的品牌关键词
+    # 品牌文件 stem -> 用户可能提到的关键词（用于 detect_brand）
     "example": [
         "示例品牌", "example brand", "mybrand",
+    ],
+    "sky": [
+        "光遇", "sky", "光遇游戏", "sky 光遇", "天空之子",
     ],
 }
 
@@ -97,12 +100,41 @@ class BrandSkill(Skill):
                 return _load_yaml(self.brands_dir / p["file"])
         return None
 
+    def _brand_detect_terms(self) -> list[tuple[str, list[str]]]:
+        """返回 [(brand_key, [name, alias1, ...]), ...]，用于从用户消息中匹配品牌。"""
+        out: list[tuple[str, list[str]]] = []
+        if not self.brands_dir.exists():
+            return out
+        for f in sorted(self.brands_dir.glob("*.yaml")):
+            if f.name.startswith("_"):
+                continue
+            try:
+                data = _load_yaml(f)
+                key = f.stem
+                name = (data.get("name") or "").strip()
+                if isinstance(name, str) and "(" in name:
+                    name = name.split("(")[0].strip()
+                aliases = data.get("aliases") or data.get("keywords") or []
+                if isinstance(aliases, str):
+                    aliases = [aliases]
+                terms = [t for t in [name, key] + list(aliases) if t and isinstance(t, str)]
+                terms = list(dict.fromkeys(terms))
+                if terms:
+                    out.append((key, terms))
+            except Exception:
+                continue
+        return out
+
     def detect_brand(self, text: str) -> Optional[dict]:
-        """根据文本中的关键词自动识别品牌并加载。"""
+        """根据文本中的关键词或品牌名/别名自动识别品牌并加载。"""
         lower = text.lower()
         for brand_key, keywords in _BRAND_KEYWORDS.items():
             for kw in keywords:
                 if kw.lower() in lower:
+                    return self.load_brand(brand_key)
+        for brand_key, terms in self._brand_detect_terms():
+            for term in terms:
+                if term and term.lower() in lower:
                     return self.load_brand(brand_key)
         return None
 

@@ -89,34 +89,46 @@ _EMOJI_POOL = ["🎭", "📈", "💎", "🔥", "🚀", "🎯", "⚡", "🌊"]
 _COLOR_POOL = ["purple", "green", "orange", "red", "blue", "indigo", "teal", "yellow"]
 
 
+# 带冒号的前缀：剥掉后整段都当 topic，不再在正文里找冒号分割（避免需求里的「计划：」「目标：」等被误拆）
+_TOPIC_ONLY_PREFIXES = ("比稿：", "比稿:", "pitch：", "pitch:")
+
+
 def parse_agency_spec(raw_text: str) -> tuple[List[Agency], str]:
     """
     解析用户输入的比稿指令，提取 Agency 配置和话题。
 
     支持的格式：
-      比稿：活动主题               → 默认 3 组
-      比稿 2组 体验派 增长派：主题  → 自定义 2 组
-      比稿 体验派 品牌派：主题      → 自定义 2 组（不写数量）
-      pitch: topic                  → 默认 3 组
-      pitch 2 growth brand: topic   → 自定义
+      比稿：活动主题（可多行、可含冒号）  → 默认 3 组，整段为 topic
+      比稿 2组 体验派 增长派：主题        → 自定义 2 组
+      比稿 体验派 品牌派：主题            → 自定义 2 组（不写数量）
+      pitch: topic（可多行）              → 默认 3 组
+      pitch 2 growth brand: topic         → 自定义
 
     返回 (agencies, topic)。
     """
     text = raw_text.strip()
 
-    prefixes = ["比稿：", "比稿:", "比稿 ", "pitch：", "pitch:", "pitch "]
+    # 长前缀优先，避免「比稿：」被当成「比稿」只剥掉两个字
+    prefixes = ["比稿：", "比稿:", "比稿 ", "pitch：", "pitch:", "pitch ", "比稿", "pitch"]
+    matched_prefix = ""
     for p in prefixes:
         if text.lower().startswith(p.lower()):
+            matched_prefix = p
             text = text[len(p):].strip()
             break
 
-    sep_match = re.search(r"[：:]", text)
-    if sep_match:
-        spec_part = text[:sep_match.start()].strip()
-        topic = text[sep_match.end():].strip()
-    else:
+    # 若用的是「比稿：」「pitch：」等，剥掉后整段都是 topic，不再按冒号拆（需求里可能有多处冒号）
+    if matched_prefix in _TOPIC_ONLY_PREFIXES:
         spec_part = ""
         topic = text
+    else:
+        sep_match = re.search(r"[：:]", text)
+        if sep_match:
+            spec_part = text[:sep_match.start()].strip()
+            topic = text[sep_match.end():].strip()
+        else:
+            spec_part = ""
+            topic = text
 
     if not spec_part:
         return list(DEFAULT_AGENCIES), topic

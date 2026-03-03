@@ -52,7 +52,7 @@ from core.feishu_client import (
     get_user_access_token,
 )
 from core.cards import make_card, welcome_card, action_card, help_card, error_card, progress_card
-from core.llm import chat
+from core.llm import chat, chat_completion
 from memo.intent import parse_intent
 from memo.bitable_board import (
     ensure_board as ensure_bitable_board,
@@ -1065,6 +1065,46 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                     reply_card(mid, error_card("月报生成失败", "生成失败，请稍后重试。"))
                 return
 
+            # ── 翻译 ──
+            if action == "translate":
+                content = (params.get("content") or text).strip()
+                if not content:
+                    reply_message(mid, "请说要翻译的内容，例如：翻译 我们希望在Q2完成优化")
+                    return
+                target_lang = (params.get("target_lang") or "").strip()
+                scene = (params.get("scene") or "").strip()
+                try:
+                    from skills.translation import TRANSLATE_SYSTEM_PROMPT
+                    system = TRANSLATE_SYSTEM_PROMPT
+                    user_parts = []
+                    if target_lang:
+                        lang_label = "英文" if target_lang == "en" else "中文"
+                        user_parts.append(f"目标语言：{lang_label}")
+                    if scene:
+                        user_parts.append(f"使用场景：{scene}")
+                    user_parts.append(f"\n{content}")
+                    user_prompt = "\n".join(user_parts)
+                    result = chat_completion(
+                        provider="deepseek",
+                        system=system,
+                        user=user_prompt,
+                        temperature=0.4,
+                    )
+                    if not result:
+                        reply_message(mid, "翻译失败，请稍后重试。")
+                        return
+                    if len(result) > 3500:
+                        parts = [result[i:i+3500] for i in range(0, len(result), 3500)]
+                        for i, part in enumerate(parts):
+                            title = "🌐 翻译结果" if i == 0 else f"🌐 翻译结果（续 {i+1}）"
+                            reply_card(mid, action_card(title, part, color="blue"))
+                    else:
+                        reply_card(mid, action_card("🌐 翻译结果", result, color="blue"))
+                except Exception as e:
+                    _log(f"翻译失败: {e}\n{traceback.format_exc()}")
+                    reply_card(mid, error_card("翻译失败", "翻译失败，请稍后重试。"))
+                return
+
             # ── 联网研究 ──
             if action == "research":
                 topic = (params.get("topic") or text).strip()
@@ -1849,7 +1889,14 @@ def _welcome() -> dict:
         )},
         {"divider": True},
         {"text": (
-            "**4️⃣ 日报·周报·月报**\n"
+            "**4️⃣ 双语翻译**\n"
+            "· `翻译 内容` 自动判断中→英或英→中\n"
+            "· `翻成英文 内容`、`翻成中文 内容` 指定方向\n"
+            "· 支持场景标注：`翻译（PPT）内容`"
+        )},
+        {"divider": True},
+        {"text": (
+            "**5️⃣ 日报·周报·月报**\n"
             "· 每天 08:00 自动发晨报、18:00 发收尾提醒\n"
             "· 发 `周报` 本周汇总、`月报` 全维度月度总结"
         )},
@@ -1872,17 +1919,22 @@ def _help() -> dict:
         ("3️⃣ 联网研究",
          "① `研究 xxx` — 多来源搜索、交叉验证、输出结构化报告\n"
          "② `fact check xxx` — 针对性事实核查"),
-        ("4️⃣ 项目管理",
+        ("4️⃣ 双语翻译",
+         "① `翻译 内容` — 自动判断中→英或英→中，输出可直接使用的专业版本\n"
+         "② 指定方向：`翻成英文 内容`、`翻成中文 内容`\n"
+         "③ 标注场景：`翻译（PPT）内容`、`翻译（邮件）内容`\n"
+         "④ 支持 PPT/邮件/Slack/演讲稿等不同语气自动适配"),
+        ("5️⃣ 项目管理",
          "① `创建项目 名称` — 在项目管理中心多维表格中创建，并引导设预算\n"
          "② `名称 加任务 内容` — 写入任务表\n"
          "③ 发飞书妙记链接 → 自动归档到资料库；粘贴会议纪要 → AI 提取任务并导入\n"
          "④ `项目列表`、`名称 总览` — 查看项目"),
-        ("5️⃣ 财务",
+        ("6️⃣ 财务",
          "① 记一笔：`记账 描述 金额` 或 `记账 午餐 35 #Q2营销`（不带项目会提示选择）\n"
          "② 粘贴费用表格/清单 — AI 自动逐条识别\n"
          "③ `创建预算 名称` 设预算项；`本月花费` 月度汇总；`名称 预算` 预算执行对比\n"
          "④ `名称 设目标 xxx 数量 单位` 添加 KPI；`名称 总览` 预算+目标+花费全维度"),
-        ("6️⃣ 日程 & 日报·周报·月报",
+        ("7️⃣ 日程 & 日报·周报·月报",
          "① 加日程：直接说 `明天下午3点开会`，自动加进飞书日历\n"
          "② 查日程：`今天`、`明天`\n"
          "③ 自动推送：每天 08:00 晨报、18:00 收尾提醒\n"
