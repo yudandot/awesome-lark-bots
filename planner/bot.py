@@ -482,8 +482,10 @@ def _resolve_doc_choice(text: str, user_key: str) -> Optional[list[str]]:
         if result:
             return result
 
-    # 关键词模糊匹配
+    # 关键词模糊匹配（跳过纯数字 key，数字已在上方处理）
     for key, val in menu.items():
+        if key.isdigit():
+            continue
         if key in t:
             return [val] if isinstance(val, str) else list(val)
 
@@ -796,50 +798,61 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                 reply_card(mid, _welcome())
                 return
 
-            # ── 检查是否是文档选择 ──
             user_key = uid or mid
-            doc_choice = _resolve_doc_choice(text, user_key)
-            if doc_choice is not None:
-                _handle_doc_choice(mid, uid, user_key, doc_choice)
-                return
 
-            # ── 退出追问 ──
-            if text.strip() in _EXIT_FOLLOWUP_COMMANDS and _has_planning_context(user_key):
+            # ── 显式新规划/比稿请求 优先级最高（防止被文档/追问截胡）──
+            if _is_explicit_new_planning(text):
+                _log(f"检测到显式新规划/比稿请求，清除旧上下文")
                 _clear_planning_context(user_key)
                 with _pending_docs_lock:
                     _pending_docs.pop(user_key, None)
                 with _pending_project_regs_lock:
                     _pending_project_regs.pop(user_key, None)
-                reply_message(mid, "已结束讨论。发新消息即可开始新的对话或规划。")
-                return
+                # 继续往下走到比稿/规划分支
+            else:
+                # ── 检查是否是文档选择 ──
+                doc_choice = _resolve_doc_choice(text, user_key)
+                if doc_choice is not None:
+                    _handle_doc_choice(mid, uid, user_key, doc_choice)
+                    return
 
-            # ── 项目纳入请求 ──
-            project_reg = _resolve_project_registration(text, user_key)
-            if project_reg:
-                _handle_project_registration(mid, uid, user_key, project_reg)
-                return
+                # ── 退出追问 ──
+                if text.strip() in _EXIT_FOLLOWUP_COMMANDS and _has_planning_context(user_key):
+                    _clear_planning_context(user_key)
+                    with _pending_docs_lock:
+                        _pending_docs.pop(user_key, None)
+                    with _pending_project_regs_lock:
+                        _pending_project_regs.pop(user_key, None)
+                    reply_message(mid, "已结束讨论。发新消息即可开始新的对话或规划。")
+                    return
 
-            # ── 规划追问（有上下文 + 非显式新规划）──
-            if _has_planning_context(user_key) and not _is_explicit_new_planning(text):
-                _log(f"追问模式: {text[:60]!r}")
-                try:
-                    answer = _planning_followup(text, user_key)
-                    reply_message(mid, answer)
-                except Exception as e:
-                    _log(f"追问回复异常: {e}")
-                    reply_message(mid, "抱歉，追问时出了点问题。你可以继续提问或发「结束讨论」退出。")
-                return
+                # ── 项目纳入请求 ──
+                project_reg = _resolve_project_registration(text, user_key)
+                if project_reg:
+                    _handle_project_registration(mid, uid, user_key, project_reg)
+                    return
 
-            # ── 普通对话（无规划信号）──
-            if not _needs_planning(text):
-                _log(f"对话模式: {text[:60]!r}")
-                try:
-                    answer = _chat_reply(text)
-                    reply_message(mid, answer)
-                except Exception as e:
-                    _log(f"对话回复异常: {e}")
-                    reply_message(mid, "抱歉，出了点问题，稍后再试。")
-                return
+                # ── 规划追问（有上下文 + 非显式新规划）──
+                if _has_planning_context(user_key):
+                    _log(f"追问模式: {text[:60]!r}")
+                    try:
+                        answer = _planning_followup(text, user_key)
+                        reply_message(mid, answer)
+                    except Exception as e:
+                        _log(f"追问回复异常: {e}")
+                        reply_message(mid, "抱歉，追问时出了点问题。你可以继续提问或发「结束讨论」退出。")
+                    return
+
+                # ── 普通对话（无规划信号）──
+                if not _needs_planning(text):
+                    _log(f"对话模式: {text[:60]!r}")
+                    try:
+                        answer = _chat_reply(text)
+                        reply_message(mid, answer)
+                    except Exception as e:
+                        _log(f"对话回复异常: {e}")
+                        reply_message(mid, "抱歉，出了点问题，稍后再试。")
+                    return
 
             # ── 比稿模式 ──
             if _is_pitch_request(text):

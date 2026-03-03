@@ -470,8 +470,23 @@ _SMART_CHAT_SYSTEM = (
     "- 不要先说「好的」「我来帮你」\n"
     "- 不要反问用户「你有哪些任务」「你列一下」——你有工具可以自己查\n"
     "- 基于用户实际的待办和项目说话，引用具体条目\n"
-    "- 简洁，控制在 200 字以内"
+    "- 简洁，控制在 200 字以内\n\n"
+    "██ 格式禁令 ██\n"
+    "输出环境是飞书纯文本，不支持 Markdown。\n"
+    "禁止使用 ** 加粗、* 斜体、## 标题、```代码块。\n"
+    "用数字序号（1. 2. 3.）分条，用「」做强调，用 → 表箭头。换行分段即可。"
 )
+
+
+def _strip_markdown(text: str) -> str:
+    """移除纯文本中的 Markdown 格式符号。"""
+    import re
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = re.sub(r'\*(.+?)\*', r'\1', text)
+    text = re.sub(r'#{1,6}\s*', '', text)
+    text = re.sub(r'```[\s\S]*?```', '', text)
+    text = re.sub(r'`(.+?)`', r'\1', text)
+    return text.strip()
 
 
 def _smart_chat(text: str, open_id: str) -> str:
@@ -502,8 +517,8 @@ def _smart_chat(text: str, open_id: str) -> str:
         result = agent.run(text)
         if result.tool_calls_made:
             _log(f"[智能对话] 调用了 {len(result.tool_calls_made)} 次工具: "
-                 f"{', '.join(tc['name'] for tc in result.tool_calls_made)}")
-        return result.content or "（暂无回复）"
+                 f"{', '.join(tc.get('tool', tc.get('name', '?')) for tc in result.tool_calls_made)}")
+        return _strip_markdown(result.content or "（暂无回复）")
 
     except Exception as e:
         _log(f"[智能对话] AgentLoop 失败({e}), 回退简单 chat")
@@ -511,10 +526,11 @@ def _smart_chat(text: str, open_id: str) -> str:
             from core.skill_router import enrich_prompt
             system_prompt = enrich_prompt(
                 "你是飞书里的备忘与日程助手。主要功能：记备忘、加日历、查日程。"
-                "同时也可以回答一般问题。直接输出结果，不要先说「好的」「我来帮你」。",
+                "同时也可以回答一般问题。直接输出结果，不要先说「好的」「我来帮你」。"
+                "输出纯文本，禁止 Markdown（** * ## ```）。用数字序号分条，用「」做强调。",
                 user_text=text, bot_type="assistant",
             )
-            return chat(text, system_prompt=system_prompt) or "（暂无回复）"
+            return _strip_markdown(chat(text, system_prompt=system_prompt) or "（暂无回复）")
         except Exception as chat_err:
             _log(f"聊天 LLM 异常: {chat_err}")
             return "（AI 暂时不可用，请稍后再试）"
