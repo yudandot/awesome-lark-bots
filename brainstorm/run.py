@@ -977,6 +977,56 @@ def run_brainstorm(
     if is_v3 and round_summaries:
         summary_input = f"主题：{topic}\n\n各轮摘要：\n" + "\n\n".join(f"第{i}轮：{s}" for i, s in enumerate(round_summaries, 1))
 
+        # ── 创意全清单：提取所有 idea，排序，AI 推荐 Top 3 ──
+        print("[创意全清单] 提取所有创意方向并排序...", flush=True)
+        _inventory_system = (
+            "你是脑暴创意盘点员。从以下四轮讨论摘要中，提取所有出现过的创意方向/idea（包括被淘汰的），"
+            "按综合潜力从高到低排序，输出一份完整清单。\n\n"
+            "输出格式（严格遵守）：\n\n"
+            "🏆 AI 推荐 Top 3\n\n"
+            "1. [方向名称]\n"
+            "   核心思路：一句话说清楚\n"
+            "   胜出理由：为什么在讨论中胜出\n"
+            "   风险提醒：最大的不确定性是什么\n\n"
+            "2. ...\n3. ...\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "💡 被淘汰但有亮点（可捞回）\n\n"
+            "4. [方向名称]\n"
+            "   核心思路：一句话\n"
+            "   亮点：这个 idea 最值得保留的部分\n"
+            "   被淘汰原因：为什么没入选\n"
+            "   复活建议：如果要用，需要补什么\n\n"
+            "5. ...\n（列出所有被淘汰的方向，不遗漏）\n\n"
+            "要求：\n"
+            "- 必须用中文\n"
+            "- 编号连续（1, 2, 3, 4, 5, 6...），Top 3 和被淘汰的共用一个序号体系\n"
+            "- 对被淘汰的方向要客观公正——说清楚亮点，不要因为被淘汰就贬低\n"
+            "- 每个方向的描述要简洁，一个方向不超过 4 行"
+        )
+        try:
+            _inventory = chat_completion(
+                provider="deepseek", system=_inventory_system, user=summary_input, temperature=0.3,
+            ).strip()
+        except Exception as _inv_err:
+            print(f"  [创意全清单] 生成失败: {_inv_err}", flush=True)
+            _inventory = ""
+
+        if _inventory:
+            session_lines.append("## 创意全清单")
+            session_lines.append("")
+            session_lines.append(_inventory)
+            session_lines.append("")
+            session_lines.append("---")
+            session_lines.append("")
+            _send_brainstorm_card(
+                "📋 创意全清单（所有 idea 排序）",
+                truncate_for_display(_inventory),
+                color="indigo",
+                webhook_override=resolved_webhook,
+            )
+            time.sleep(FEISHU_INTERVAL)
+            print("[创意全清单] 已生成并推送", flush=True)
+
         if topic_type == "campaign":
             print("[最终交付] 由 Kimi 生成：问对问题 + AI深化prompt + 视觉概念prompt...", flush=True)
             final_system = (
@@ -1090,9 +1140,44 @@ def run_brainstorm(
             session_lines.append("")
             session_lines.append(final_output)
             session_lines.append("")
-            to_feishu = final_output if len(final_output) <= 8000 else final_output[:8000] + "\n\n[内容过长，完整交付请查看 session 文件]"
-            _send_brainstorm_card("最终交付", to_feishu, color="green", webhook_override=resolved_webhook)
-            time.sleep(FEISHU_INTERVAL)
+
+            _section_titles = {
+                "【一】": "🧑 去问对的人对的问题",
+                "【二】": "🤖 交给最强 AI 继续深化",
+                "【三】": "🎨 视觉概念 Prompt",
+            }
+            _section_markers = ["【一】", "【二】", "【三】"]
+            _cards_sent = False
+
+            sections = []
+            remaining = final_output
+            for i, marker in enumerate(_section_markers):
+                pos = remaining.find(marker)
+                if pos == -1:
+                    continue
+                next_pos = len(remaining)
+                for next_marker in _section_markers[i + 1:]:
+                    np = remaining.find(next_marker)
+                    if np != -1:
+                        next_pos = np
+                        break
+                section_text = remaining[pos:next_pos].strip()
+                if section_text:
+                    sections.append((marker, section_text))
+
+            if len(sections) >= 2:
+                for marker, section_text in sections:
+                    card_title = _section_titles.get(marker, f"最终交付 {marker}")
+                    card_text = truncate_for_display(section_text)
+                    _send_brainstorm_card(card_title, card_text, color="green", webhook_override=resolved_webhook)
+                    time.sleep(FEISHU_INTERVAL)
+                _cards_sent = True
+                print(f"  [最终交付] 拆分为 {len(sections)} 张卡片发送", flush=True)
+
+            if not _cards_sent:
+                to_feishu = final_output if len(final_output) <= 8000 else final_output[:8000] + "\n\n[内容过长，完整交付请查看 session 文件]"
+                _send_brainstorm_card("最终交付", to_feishu, color="green", webhook_override=resolved_webhook)
+                time.sleep(FEISHU_INTERVAL)
 
     session_content = "\n".join(session_lines)
     path = save_session(session_content, ts)

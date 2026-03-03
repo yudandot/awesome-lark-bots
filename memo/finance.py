@@ -95,7 +95,7 @@ def add_expense(
 
     try:
         from memo.bitable_hub import add_expense_record as _bt_add_expense
-        _bt_add_expense(
+        ok, rid = _bt_add_expense(
             date=record["date"],
             category=record.get("category", "其他"),
             project=record.get("project", ""),
@@ -105,8 +105,12 @@ def add_expense(
             payment=record.get("payment", ""),
             team_code=team_code,
         )
-    except Exception:
-        pass
+        import sys
+        if not ok:
+            print(f"[Finance] 花费写入bitable失败: {rid}", file=sys.stderr, flush=True)
+    except Exception as _bt_err:
+        import sys
+        print(f"[Finance] 花费写入bitable异常: {_bt_err}", file=sys.stderr, flush=True)
 
     return record
 

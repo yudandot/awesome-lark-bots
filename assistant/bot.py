@@ -691,11 +691,12 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                     desc = _ps.get("description", "")
                     amt = _ps.get("amount", 0)
                     exp_type = _ps.get("expense_type", "支出")
+                    cat = _ps.get("category", "其他")
                     proj_tag = ""
                     if t.lower() not in ("确认", "ok", "跳过", "不归入"):
                         proj_tag = t.strip().lstrip("#")
                     record = add_expense(
-                        amount=amt, description=desc,
+                        amount=amt, description=desc, category=cat,
                         expense_type=exp_type, project=proj_tag,
                         user_open_id=user_open_id or "",
                         team_code=_current_team_code,
@@ -1623,6 +1624,7 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                 amt_str = (params.get("amount") or "").strip()
                 exp_type = (params.get("type") or "支出").strip()
                 proj_tag = (params.get("project") or "").strip()
+                cat = (params.get("category") or "其他").strip()
                 if not desc or not amt_str:
                     reply_message(mid, "格式：记账 午餐 35\n或：支出 办公用品 200 #Q2营销")
                     return
@@ -1637,7 +1639,8 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                         tag_list = "　".join(f"`#{t}`" for t in tags[:8])
                         _user_key = user_open_id or mid
                         _set_pending(_user_key, "awaiting_expense_project",
-                                     description=desc, amount=amt, expense_type=exp_type)
+                                     description=desc, amount=amt, expense_type=exp_type,
+                                     category=cat)
                         reply_card(mid, action_card(
                             f"💰 {exp_type} ¥{amt:.0f} — {desc}",
                             f"要归入哪个项目？\n{tag_list}\n\n"
@@ -1646,7 +1649,7 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                         ))
                         return
                 record = add_expense(
-                    amount=amt, description=desc,
+                    amount=amt, description=desc, category=cat,
                     expense_type=exp_type, project=proj_tag,
                     user_open_id=user_open_id or "",
                     team_code=_current_team_code,

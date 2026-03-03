@@ -375,7 +375,12 @@ def add_expense_record(
 
 
 def _update_budget_actual(project: str, category: str, amount: float, team_code: str = "") -> None:
-    """在预算表中查找 项目+类别 匹配的行，累加实际花费并重算剩余/使用率。"""
+    """在预算表中查找匹配行，累加实际花费并重算剩余/使用率。
+
+    匹配策略：
+      1. 精确匹配 项目+类别
+      2. 类别不匹配时，按项目匹配（优先预算最大的项）
+    """
     from core.feishu_client import list_bitable_records, update_bitable_record
 
     app, tid = _table_id("budgets", team_code)
@@ -390,26 +395,46 @@ def _update_budget_actual(project: str, category: str, amount: float, team_code:
         proj_lower = project.strip().lower()
         cat_lower = category.strip().lower()
 
+        proj_matches = []
+        exact_match = None
         for rec in records:
             f = rec.get("fields", {})
             r_proj = str(f.get("项目", "")).strip().lower()
+            if r_proj != proj_lower:
+                continue
             r_cat = str(f.get("类别", "")).strip().lower()
-            if r_proj == proj_lower and r_cat == cat_lower:
-                record_id = rec.get("record_id", "")
-                if not record_id:
-                    continue
-                old_actual = float(f.get("实际花费", 0) or 0)
-                budget_amt = float(f.get("预算金额", 0) or 0)
-                new_actual = round(old_actual + amount, 2)
-                remaining = round(budget_amt - new_actual, 2)
-                usage = f"{new_actual / budget_amt * 100:.0f}%" if budget_amt > 0 else "-"
-                update_bitable_record(app, tid, record_id, {
-                    "实际花费": new_actual,
-                    "剩余": f"¥{remaining:,.0f}",
-                    "使用率": usage,
-                })
-                _log(f"预算累加: {project}/{category} +{amount} -> 实际{new_actual}")
-                return
+            if r_cat == cat_lower:
+                exact_match = rec
+                break
+            proj_matches.append(rec)
+
+        target = exact_match
+        if not target and proj_matches:
+            proj_matches.sort(
+                key=lambda r: float(r.get("fields", {}).get("预算金额", 0) or 0),
+                reverse=True,
+            )
+            target = proj_matches[0]
+
+        if not target:
+            return
+
+        record_id = target.get("record_id", "")
+        if not record_id:
+            return
+        f = target.get("fields", {})
+        old_actual = float(f.get("实际花费", 0) or 0)
+        budget_amt = float(f.get("预算金额", 0) or 0)
+        new_actual = round(old_actual + amount, 2)
+        remaining = round(budget_amt - new_actual, 2)
+        usage = f"{new_actual / budget_amt * 100:.0f}%" if budget_amt > 0 else "-"
+        update_bitable_record(app, tid, record_id, {
+            "实际花费": new_actual,
+            "剩余": f"¥{remaining:,.0f}",
+            "使用率": usage,
+        })
+        matched_cat = str(f.get("类别", "")).strip()
+        _log(f"预算累加: {project}/{matched_cat} +{amount} -> 实际{new_actual}")
     except Exception as e:
         _log(f"预算累加异常: {e}")
 
