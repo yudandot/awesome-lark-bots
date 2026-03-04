@@ -509,9 +509,11 @@ def _smart_chat(text: str, open_id: str) -> str:
             on_tool_call=lambda name, args: _log(f"🔍 [智能对话] {name}: {str(args)[:80]}"),
         )
 
+        from skills import collect_tools as _collect_skill_tools
         tools = [WEB_SEARCH_TOOL, NEWS_SEARCH_TOOL, TRENDING_TOOL, TEAM_DECISIONS_TOOL]
         if open_id:
             tools.append(make_user_context_tool(open_id))
+        tools.extend(_collect_skill_tools())
         agent.add_tools(tools)
 
         result = agent.run(text)

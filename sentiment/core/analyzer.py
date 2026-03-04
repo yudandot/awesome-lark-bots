@@ -9,6 +9,7 @@ from sentiment.config.settings import (
     KIMI_API_KEY, DEEPSEEK_API_KEY, KIMI_REPORT_MAX_TOKENS,
     KIMI_REPORT_WEB_SEARCH, MAX_POSTS_BLOCK_CHARS, log,
 )
+from core.skill_router import enrich_prompt
 from sentiment.core.stats import stats_text
 
 
@@ -122,9 +123,10 @@ def analyze_with_ai(posts: list[dict], stats: dict, profile: dict,
     log.info("Prompt length: %d chars (~%d tokens)", len(prompt), len(prompt) // 2)
 
     subject = profile.get("subject", "品牌")
-    system_content = (
+    system_content = enrich_prompt(
         f"你是资深游戏舆情与社区生态分析师，为{subject}输出舆情与社区生态观察报告，"
-        "支持社区运营、市场策略、创作者生态与风险判断。不编造数据，风险判断克制。"
+        "支持社区运营、市场策略、创作者生态与风险判断。不编造数据，风险判断克制。",
+        user_text=prompt[:500], bot_type="sentiment",
     )
 
     if DEEPSEEK_API_KEY:

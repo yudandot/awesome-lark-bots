@@ -116,7 +116,9 @@ def run_step(step_num: int, topic: str, context: str, previous_outputs: list[tup
             temperature=0.7,
             on_tool_call=lambda name, args: print(f"  🔍 [{name}] {str(args)[:80]}", flush=True),
         )
-        agent.add_tools([WEB_SEARCH_TOOL, NEWS_SEARCH_TOOL, FETCH_URL_TOOL, TRENDING_TOOL])
+        from skills import collect_tools as _collect_skill_tools
+        agent.add_tools([WEB_SEARCH_TOOL, NEWS_SEARCH_TOOL, FETCH_URL_TOOL, TRENDING_TOOL]
+                        + _collect_skill_tools())
         result = agent.run(user_msg)
         if result.tool_calls_made:
             print(f"  [第{step_num}步] 搜索了 {len(result.tool_calls_made)} 次", flush=True)

@@ -26,12 +26,13 @@ from typing import Optional
 
 log = logging.getLogger("skill_router")
 
-_MAX_SKILL_CHARS = 6000
+_MAX_SKILL_CHARS = 50000
 
 _SKILL_PRIORITY = [
     "decision_frameworks", "thinking_models", "personal",
     "stakeholder", "cross_cultural", "translation",
     "brand", "platform", "copywriting", "calendar", "marketing",
+    "video_prompt", "platform_adapter", "creative_brief", "brand_voice_checker",
 ]
 
 

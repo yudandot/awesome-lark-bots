@@ -15,6 +15,7 @@ import re
 from typing import Optional
 
 from core.llm import chat_completion
+from core.skill_router import enrich_prompt
 from conductor.config import log
 from conductor.models import ContentIdea, ContentDraft
 
@@ -113,7 +114,7 @@ def create_content(
     try:
         agent = AgentLoop(
             provider="deepseek",
-            system=COPYWRITING_SYSTEM,
+            system=enrich_prompt(COPYWRITING_SYSTEM, user_text=copy_prompt, bot_type="conductor"),
             temperature=0.7,
             max_rounds=6,
             response_format={"type": "json_object"},
@@ -230,7 +231,9 @@ def _create_content_fallback(
     )
     try:
         raw = chat_completion(
-            provider="deepseek", system=fallback_system, user=user,
+            provider="deepseek",
+            system=enrich_prompt(fallback_system, user_text=user, bot_type="conductor"),
+            user=user,
             temperature=0.7, response_format={"type": "json_object"},
         )
         data = json.loads(raw)

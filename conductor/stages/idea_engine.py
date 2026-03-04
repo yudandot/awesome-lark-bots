@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from core.llm import chat_completion
+from core.skill_router import enrich_prompt
 from conductor.config import log
 from conductor.models import TrendItem, ContentIdea
 
@@ -103,7 +104,7 @@ def generate_ideas(
     try:
         agent = AgentLoop(
             provider="deepseek",
-            system=IDEATION_SYSTEM,
+            system=enrich_prompt(IDEATION_SYSTEM, user_text=user_prompt, bot_type="conductor"),
             temperature=0.85,
             max_rounds=8,
             response_format={"type": "json_object"},
@@ -177,7 +178,9 @@ def _generate_ideas_fallback(
     )
     try:
         raw = chat_completion(
-            provider="deepseek", system=fallback_system, user=user_prompt,
+            provider="deepseek",
+            system=enrich_prompt(fallback_system, user_text=user_prompt, bot_type="conductor"),
+            user=user_prompt,
             temperature=0.85, response_format={"type": "json_object"},
         )
         data = json.loads(raw)

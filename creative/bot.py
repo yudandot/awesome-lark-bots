@@ -537,8 +537,10 @@ def _generate_with_research(system_prompt: str, user_prompt: str, raw_input: str
             provider="deepseek", system=enriched_system, max_rounds=5, temperature=0.7,
             on_tool_call=lambda name, args: _log(f"🔍 [创意调研] {name}: {str(args)[:80]}"),
         )
+        from skills import collect_tools as _collect_skill_tools
         agent.add_tools([WEB_SEARCH_TOOL, TRENDING_TOOL, SEARCH_PLATFORM_TOOL,
-                         BRAND_INFO_TOOL, PLATFORM_GUIDE_TOOL])
+                         BRAND_INFO_TOOL, PLATFORM_GUIDE_TOOL]
+                        + _collect_skill_tools())
         result = agent.run(user_prompt)
         if result.tool_calls_made:
             _log(f"[生成] 搜索了 {len(result.tool_calls_made)} 次")

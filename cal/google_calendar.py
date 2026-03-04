@@ -5,15 +5,36 @@ Google 日历只读拉取：iCal 链接（优先）+ 服务账号 API（可选�
 配置：
   GOOGLE_CALENDAR_ICAL_URL  — Google 日历 iCal 订阅地址（推荐）
   GOOGLE_CALENDAR_CREDENTIALS_JSON — 服务账号 JSON 文件路径（可选）
+  TZ 或 CALENDAR_TIMEZONE — 时区名称，默认 Asia/Shanghai
 """
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
 try:
     import urllib.request
 except ImportError:
     urllib = None  # type: ignore
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo  # type: ignore
+
+
+def _local_tz() -> Any:
+    tz_name = (os.environ.get("CALENDAR_TIMEZONE") or os.environ.get("TZ") or "").strip()
+    if not tz_name:
+        tz_name = "Asia/Shanghai"
+    return ZoneInfo(tz_name)
+
+
+def _to_local(dt: datetime) -> datetime:
+    """将 datetime 转为本地时区。naive datetime 视为 UTC。"""
+    local = _local_tz()
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(local)
 
 
 def _get_ical_url() -> Optional[str]:
@@ -32,7 +53,7 @@ def _parse_dt(v) -> Optional[date]:
     try:
         dt = v.dt if hasattr(v, "dt") else v
         if isinstance(dt, datetime):
-            return dt.date()
+            return _to_local(dt).date()
         if isinstance(dt, date):
             return dt
         return None
@@ -46,7 +67,7 @@ def _format_dt(v) -> str:
     try:
         dt = v.dt if hasattr(v, "dt") else v
         if isinstance(dt, datetime):
-            return dt.strftime("%Y-%m-%dT%H:%M:%S")
+            return _to_local(dt).strftime("%Y-%m-%dT%H:%M:%S")
         if isinstance(dt, date):
             return dt.strftime("%Y-%m-%d")
         return str(dt)
@@ -98,8 +119,11 @@ def _list_events_from_api(date_from: str, date_to: str, calendar_id: Optional[st
         creds = service_account.Credentials.from_service_account_file(cred_path, scopes=scopes)
         service = build("calendar", "v3", credentials=creds)
         cal_id = (calendar_id or os.environ.get("GOOGLE_CALENDAR_ID") or "").strip() or "primary"
+        local = _local_tz()
+        t_min = datetime.strptime(date_from, "%Y-%m-%d").replace(tzinfo=local).isoformat()
+        t_max = (datetime.strptime(date_to, "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=local)).isoformat()
         events_result = service.events().list(
-            calendarId=cal_id, timeMin=f"{date_from}T00:00:00Z", timeMax=f"{date_to}T23:59:59Z",
+            calendarId=cal_id, timeMin=t_min, timeMax=t_max,
             singleEvents=True, orderBy="startTime",
         ).execute()
         out = []

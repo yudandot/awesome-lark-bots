@@ -402,6 +402,7 @@ def refine_brainstorm_topic_deepseek(topic: str, context: str, topic_type: str =
     """用 AgentLoop 优化脑暴主题——LLM 可搜索行业信息、竞品案例来丰富 Insight。"""
     from core.agent import AgentLoop
     from core.tools import WEB_SEARCH_TOOL, NEWS_SEARCH_TOOL, TRENDING_TOOL, SEARCH_PLATFORM_TOOL
+    from skills import collect_tools as _collect_skill_tools
 
     user = f"""Input: Raw brainstorming topic and background materials below.
 
@@ -438,7 +439,8 @@ Background materials:
             temperature=0.7,
             on_tool_call=lambda name, args: print(f"  🔍 [主题调研] {name}: {str(args)[:80]}", flush=True),
         )
-        agent.add_tools([WEB_SEARCH_TOOL, NEWS_SEARCH_TOOL, TRENDING_TOOL, SEARCH_PLATFORM_TOOL])
+        agent.add_tools([WEB_SEARCH_TOOL, NEWS_SEARCH_TOOL, TRENDING_TOOL, SEARCH_PLATFORM_TOOL]
+                        + _collect_skill_tools())
         result = agent.run(user)
         if result.tool_calls_made:
             print(f"  [主题优化] 搜索了 {len(result.tool_calls_made)} 次", flush=True)

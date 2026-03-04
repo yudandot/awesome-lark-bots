@@ -8,6 +8,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from core.llm import chat_completion
+from core.skill_router import enrich_prompt
 from newsbot.config import log
 
 
@@ -89,7 +90,8 @@ def analyze_cn(
 {gnews}"""
 
     try:
-        r = chat_completion(provider="deepseek", system=CN_SYSTEM,
+        r = chat_completion(provider="deepseek",
+                            system=enrich_prompt(CN_SYSTEM, user_text=user[:300], bot_type="newsbot"),
                             user=user, temperature=0.4)
         log.info("华人圈分析: %d 字", len(r))
         return r
@@ -163,7 +165,8 @@ def analyze_intl(
 {"".join(parts)}"""
 
     try:
-        r = chat_completion(provider="deepseek", system=INTL_SYSTEM,
+        r = chat_completion(provider="deepseek",
+                            system=enrich_prompt(INTL_SYSTEM, user_text=user[:300], bot_type="newsbot"),
                             user=user, temperature=0.4)
         log.info("国际分析: %d 字", len(r))
         return r
