@@ -43,6 +43,29 @@
 
 ---
 
+## 🖥️ Studio 工作站 — 不需要飞书也能用
+
+**不想配飞书？** `studio/` 是一个独立的 Streamlit 本地应用，**只需一个 API Key 就能跑**，无需飞书、无需知识库。
+
+```bash
+cd studio && streamlit run app.py
+```
+
+或者双击 `studio/启动工作站.command`（macOS 一键启动）。
+
+| 模式 | 功能 |
+|------|------|
+| 💡 灵感 | 5 个 AI 角色四轮脑暴，产出创意全清单 + AI 深化 Prompt |
+| 📋 规划 | 六步理性规划，从问题定义到可执行方案 |
+| 🎨 创作 | 选题 → 分镜 Prompt → 执行 Brief，一站式创作 |
+| 🔍 调研 | Fact-Checked 深度研究，多来源交叉验证 |
+
+支持所有 OpenAI 兼容 API（DeepSeek、Gemini、GPT-4o、Kimi、通义千问……），三个模型插槽可以填同一个也可以混搭。
+
+> 适合场景：个人使用、给不用飞书的同事、快速体验核心功能。完整的飞书集成（多 bot 协作、项目管理、文档交付等）请使用上面的机器人版本。
+
+---
+
 ## 新手上路（3 步开始）
 
 ### 第 1 步：安装依赖
@@ -500,6 +523,13 @@ awesome-lark-bots/
 │   ├── copywriting.py         #   经典文案框架（AIDA、PAS、FAB 等，含工具接口）
 │   └── cal_skill.py           #   营销日历（节日、大促、季节性主题）
 │
+├── studio/                   # 独立 Streamlit 工作站（不需要飞书）
+│   ├── app.py                #   主入口 + 侧边栏导航 + API Key 配置
+│   ├── engine.py             #   四种模式的 LLM 调用封装
+│   ├── i18n.py               #   中英双语 UI
+│   ├── pages/                #   灵感 / 规划 / 创作 / 调研 四个页面
+│   └── run.sh                #   一键启动脚本
+│
 ├── CN-MKT-Skills/            # 营销技能知识库（规划机器人可参考）
 ├── briefs/                   # 脑暴主题 brief 文件
 ├── runs/                     # 运行记录输出（自动生成）
@@ -720,6 +750,16 @@ Most work scenarios don't require handing over all the keys. A chat window + a f
 | **News Digest** | Multi-source news aggregation + AI analysis, daily push | `python3 -m newsbot` |
 
 > ⚗️ **Content Assistant** is in active exploration — the basic framework works end-to-end, but content quality control and automated publishing to social media platforms are still areas we're actively improving. Community contributions are very welcome!
+
+### Studio — No Feishu Required
+
+**Don't want to set up Feishu?** The `studio/` folder is a standalone Streamlit app that runs locally with just one API key — no Feishu, no knowledge base needed.
+
+```bash
+cd studio && streamlit run app.py
+```
+
+Four modes: 💡 Brainstorm (5 AI roles, 4 rounds) · 📋 Plan (6-step rational planning) · 🎨 Create (topic → storyboard → exec brief) · 🔍 Research (fact-checked deep research). Works with any OpenAI-compatible API (DeepSeek, Gemini, GPT-4o, Kimi, Qwen…).
 
 ### Quick Start
 
