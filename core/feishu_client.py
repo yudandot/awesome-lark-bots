@@ -1140,6 +1140,49 @@ def create_bitable_table(
         return False, f"创建数据表异常: {e}"
 
 
+def list_bitable_fields(
+    app_token: str,
+    table_id: str,
+) -> Tuple[bool, list]:
+    """列出多维表格的所有字段。返回 (ok, [{"field_name": ..., "field_id": ..., "type": ...}, ...])。"""
+    try:
+        url = f"{FEISHU_API_BASE}/bitable/v1/apps/{app_token}/tables/{table_id}/fields"
+        resp = requests.get(url, headers=_headers(), timeout=15)
+        data = resp.json()
+        if data.get("code") != 0:
+            return False, []
+        return True, (data.get("data") or {}).get("items") or []
+    except Exception:
+        return False, []
+
+
+def add_bitable_field(
+    app_token: str,
+    table_id: str,
+    field_name: str,
+    field_type: int = 1,
+    property: dict = None,
+) -> Tuple[bool, str]:
+    """向多维表格添加一个字段。
+
+    field_type: 1=文本, 2=数字, 3=单选, 5=日期, 15=超链接
+    Returns: (ok, field_id_or_error)
+    """
+    try:
+        url = f"{FEISHU_API_BASE}/bitable/v1/apps/{app_token}/tables/{table_id}/fields"
+        body: dict = {"field_name": field_name, "type": field_type}
+        if property:
+            body["property"] = property
+        resp = requests.post(url, json=body, headers=_headers(), timeout=15)
+        data = resp.json()
+        if data.get("code") != 0:
+            return False, data.get("msg", "添加字段失败") or str(data)
+        field = (data.get("data") or {}).get("field") or {}
+        return True, field.get("field_id", "")
+    except Exception as e:
+        return False, f"添加字段异常: {e}"
+
+
 def add_bitable_record(
     app_token: str,
     table_id: str,

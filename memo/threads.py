@@ -127,6 +127,29 @@ def detect_thread(content: str, existing_threads: Optional[list[str]] = None) ->
     return ""
 
 
+def extract_mention(text: str) -> tuple[str, str]:
+    """
+    从文本中提取 @提及，返回 (clean_text, mention_name)。
+
+    >>> extract_mention("重构登录页面 @claude #dev")
+    ('重构登录页面 #dev', 'claude')
+    >>> extract_mention("@claude 调研竞品")
+    ('调研竞品', 'claude')
+    """
+    m = re.search(r'[@＠]([\w\u4e00-\u9fff]+)', text)
+    if m:
+        mention = m.group(1).lower()
+        before = text[:m.start()].rstrip()
+        after = text[m.end():].lstrip()
+        # 两侧都有内容时保留一个空格
+        if before and after:
+            clean = f"{before} {after}"
+        else:
+            clean = before or after
+        return clean.strip(), mention
+    return text.strip(), ""
+
+
 def extract_thread_tag(text: str) -> tuple[str, str]:
     """
     从文本中提取 #标签，返回 (clean_text, thread_name)。

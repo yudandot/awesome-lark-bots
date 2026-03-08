@@ -86,7 +86,7 @@ from memo.store import (
     MEMO_CATEGORY_DISPLAY,
     MEMO_CATEGORIES,
 )
-from memo.threads import extract_thread_tag, detect_thread
+from memo.threads import extract_thread_tag, extract_mention, detect_thread
 from cal.aggregator import aggregate_for_date
 from cal.push_target import save_push_target_open_id
 
@@ -190,19 +190,25 @@ def _parse_memo_content_and_category(text: str) -> tuple[str, Optional[str]]:
     return t, None
 
 
-def _auto_append_board(thread: str, content: str, status: str = "⬜ 进行中"):
-    """备忘添加后自动追加到备忘看板 Bitable（静默失败）。"""
-    if not thread:
+def _auto_append_board(thread: str, content: str, status: str = "⬜ 进行中", assignee: str = "", memo_id: str = ""):
+    """备忘添加后自动追加到备忘看板 Bitable（静默失败）。
+
+    v2: 有 thread 或 assignee 就写入看板（不再跳过无线程的备忘，
+        只要有 @claude 标记就一定同步）。带 memo_id 以支持后续 upsert。
+    """
+    if not thread and not assignee:
         return
     try:
         from datetime import datetime as _dt
         created = _dt.utcnow().strftime("%Y-%m-%d")
         bitable_append_record(
-            thread=thread,
+            thread=thread or "(未分类)",
             content=content[:120],
             status=status,
             created=created,
             partition="今日新增",
+            assignee=assignee,
+            memo_id=memo_id,
         )
     except Exception:
         pass
@@ -232,26 +238,33 @@ def _split_multi_memos(text: str) -> list[str]:
     return [text.strip()]
 
 
-def _parse_memo_with_thread(text: str) -> tuple[str, Optional[str], str]:
+def _parse_memo_with_thread(text: str) -> tuple[str, Optional[str], str, str]:
     """
-    从备忘文本中提取内容、旧分类和 #线程 标签。
+    从备忘文本中提取内容、旧分类、#线程 标签和 @执行者。
 
-    「Starboard 策展流程 #creator」→ ("Starboard 策展流程", None, "creator")
-    「写周报 #要事」→ ("写周报", "project", "")  (旧分类兼容)
-    「对话系统用三层架构」→ ("对话系统用三层架构", None, "催婚")  (自动识别)
+    返回: (content, category, thread, assignee)
+
+    「重构登录 @claude #dev」→ ("重构登录", None, "dev", "claude")
+    「Starboard 策展流程 #creator」→ ("Starboard 策展流程", None, "creator", "")
+    「写周报 #要事」→ ("写周报", "project", "", "")  (旧分类兼容)
+    「对话系统用三层架构」→ ("对话系统用三层架构", None, "催婚", "")  (自动识别)
     """
     t = (text or "").strip()
+
+    # ① 先提取 @mention（不影响后续解析）
+    t, assignee = extract_mention(t)
+
     content, old_cat = _parse_memo_content_and_category(t)
     if old_cat:
-        return content, old_cat, ""
+        return content, old_cat, "", assignee
 
     content, thread_tag = extract_thread_tag(t)
     if thread_tag:
-        return content, None, thread_tag
+        return content, None, thread_tag, assignee
 
     existing = [info["thread"] for info in store_list_threads() if info["thread"] != "(未分类)"]
     auto_thread = detect_thread(content, existing_threads=existing)
-    return content, None, auto_thread
+    return content, None, auto_thread, assignee
 
 
 def _memo_category_tag(memo: dict) -> str:
@@ -727,48 +740,59 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                     items = _split_multi_memos(raw_content)
                     if len(items) > 1:
                         saved = []
+                        has_claude = False
                         for item in items:
-                            c, cat, th = _parse_memo_with_thread(item)
+                            c, cat, th, asn = _parse_memo_with_thread(item)
                             if c:
-                                store_add_memo(c, user_open_id=user_open_id, category=cat, thread=th)
-                                _auto_append_board(th, c)
+                                new_id = store_add_memo(c, user_open_id=user_open_id, category=cat, thread=th, assignee=asn)
+                                _auto_append_board(th, c, assignee=asn, memo_id=new_id)
                                 tag = f" #{th}" if th else ""
-                                saved.append(f"- {c[:60]}{tag}")
+                                claude_tag = " 🤖" if asn == "claude" else ""
+                                saved.append(f"- {c[:60]}{tag}{claude_tag}")
+                                if asn == "claude":
+                                    has_claude = True
                         if saved:
-                            reply_card(mid, action_card(
-                                f"📝 已记下 {len(saved)} 条备忘",
-                                "\n".join(saved),
-                                hints=["发「线程」查看工作线程", "发「备忘列表」查看全部"],
-                                color="green",
-                            ))
+                            title = f"📝 已记下 {len(saved)} 条备忘"
+                            hints = ["发「线程」查看工作线程", "发「备忘列表」查看全部"]
+                            if has_claude:
+                                hints.insert(0, "🤖 标记的任务将由 Claude 处理")
+                            reply_card(mid, action_card(title, "\n".join(saved), hints=hints, color="green"))
                             _log(f"备忘(多条拆分): {len(saved)} 条")
                         return
-                    content, category, thread = _parse_memo_with_thread(raw_content)
+                    content, category, thread, assignee = _parse_memo_with_thread(raw_content)
                     if not content:
                         reply_message(mid, "请说一下要记的内容，例如：任务 写周报")
                         return
-                    store_add_memo(content, user_open_id=user_open_id, category=category, thread=thread)
-                    _auto_append_board(thread, content)
+                    new_id = store_add_memo(content, user_open_id=user_open_id, category=category, thread=thread, assignee=assignee)
+                    _auto_append_board(thread, content, assignee=assignee, memo_id=new_id)
                     tag_hint = ""
                     if thread:
                         tag_hint = f" #{thread}"
                     elif category:
                         tag_hint = f"（{MEMO_CATEGORY_DISPLAY.get(category, category)}）"
-                    reply_card(mid, action_card(
-                        f"📝 已记下备忘{tag_hint}",
-                        f"**{content[:100]}**",
-                        hints=["发「线程」查看工作线程", "发「备忘列表」查看全部"],
-                        color="green",
-                    ))
-                    _log(f"备忘(关键词): 已写入 thread={thread}")
+                    if assignee == "claude":
+                        reply_card(mid, action_card(
+                            f"🤖 已记下，将由 Claude 处理{tag_hint}",
+                            f"**{content[:100]}**",
+                            hints=["Claude 会自动拾取并执行此任务", "完成后会推送结果到飞书"],
+                            color="purple",
+                        ))
+                    else:
+                        reply_card(mid, action_card(
+                            f"📝 已记下备忘{tag_hint}",
+                            f"**{content[:100]}**",
+                            hints=["发「线程」查看工作线程", "发「备忘列表」查看全部"],
+                            color="green",
+                        ))
+                    _log(f"备忘(关键词): 已写入 thread={thread} assignee={assignee}")
                     return
 
             if t.lower().startswith("todo ") or t.lower().startswith("todo:"):
                 raw_content = t[5:].lstrip(" :").strip()
                 if raw_content:
-                    content, category, thread = _parse_memo_with_thread(raw_content)
-                    store_add_memo(content, user_open_id=user_open_id, category=category, thread=thread)
-                    _auto_append_board(thread, content)
+                    content, category, thread, assignee = _parse_memo_with_thread(raw_content)
+                    new_id = store_add_memo(content, user_open_id=user_open_id, category=category, thread=thread, assignee=assignee)
+                    _auto_append_board(thread, content, assignee=assignee, memo_id=new_id)
                     tag_hint = f" #{thread}" if thread else ""
                     reply_card(mid, action_card(
                         f"📝 已记下备忘{tag_hint}",
@@ -956,36 +980,50 @@ def _handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
 
                 if len(memo_items) > 1:
                     saved = []
+                    has_claude = False
                     for item in memo_items:
-                        c, cat, th = _parse_memo_with_thread(item.strip() if isinstance(item, str) else str(item))
+                        c, cat, th, asn = _parse_memo_with_thread(item.strip() if isinstance(item, str) else str(item))
                         if c:
-                            store_add_memo(c, user_open_id=user_open_id, category=cat, thread=th)
-                            _auto_append_board(th, c)
+                            new_id = store_add_memo(c, user_open_id=user_open_id, category=cat, thread=th, assignee=asn)
+                            _auto_append_board(th, c, assignee=asn, memo_id=new_id)
                             tag = f" #{th}" if th else ""
-                            saved.append(f"- {c[:60]}{tag}")
+                            claude_tag = " 🤖" if asn == "claude" else ""
+                            saved.append(f"- {c[:60]}{tag}{claude_tag}")
+                            if asn == "claude":
+                                has_claude = True
                     if saved:
+                        hints = ["发「线程」查看工作线程", "发「备忘列表」查看全部"]
+                        if has_claude:
+                            hints.insert(0, "🤖 标记的任务将由 Claude 处理")
                         reply_card(mid, action_card(
                             f"📝 已记下 {len(saved)} 条备忘",
                             "\n".join(saved),
-                            hints=["发「线程」查看工作线程", "发「备忘列表」查看全部"],
-                            color="green",
+                            hints=hints, color="green",
                         ))
                     else:
                         reply_message(mid, "请说一下要记的备忘内容～")
                     return
 
-                content, category, thread = _parse_memo_with_thread(raw)
+                content, category, thread, assignee = _parse_memo_with_thread(raw)
                 if not content:
                     reply_message(mid, "请说一下要记的备忘内容～")
                     return
                 if not thread:
                     thread = (params.get("thread") or "").strip()
                 reminder = (params.get("reminder_date") or "").strip() or None
-                store_add_memo(content, user_open_id=user_open_id, reminder_date=reminder, category=category, thread=thread)
-                _auto_append_board(thread, content)
+                new_id = store_add_memo(content, user_open_id=user_open_id, reminder_date=reminder, category=category, thread=thread, assignee=assignee)
+                _auto_append_board(thread, content, assignee=assignee, memo_id=new_id)
                 tag_hint = f" #{thread}" if thread else ""
                 date_hint = f"（提醒：{reminder}）" if reminder else ""
-                reply_message(mid, f"已记下备忘～{tag_hint}{date_hint}")
+                if assignee == "claude":
+                    reply_card(mid, action_card(
+                        f"🤖 已记下，将由 Claude 处理{tag_hint}",
+                        f"**{content[:100]}**{date_hint}",
+                        hints=["Claude 会自动拾取并执行此任务", "完成后会推送结果到飞书"],
+                        color="purple",
+                    ))
+                else:
+                    reply_message(mid, f"已记下备忘～{tag_hint}{date_hint}")
                 return
 
             if action == "list_memos":
@@ -2269,7 +2307,9 @@ def main():
         try:
             import schedule as sched_lib
             sched_lib.every().day.at("08:00").do(lambda: run_daily_brief(is_morning=True))
+            sched_lib.every().day.at("08:30").do(_run_board_sync)
             sched_lib.every().day.at("18:00").do(lambda: run_daily_brief(is_morning=False))
+            sched_lib.every().day.at("18:30").do(_run_board_sync)
             sched_lib.every().monday.at("09:00").do(run_weekly_report)
             sched_lib.every().day.at("09:00").do(_run_reminder_check)
             while True:
@@ -2360,10 +2400,24 @@ def main():
         except Exception as e:
             _log(f"提醒检查失败: {e}")
 
+    def _run_board_sync():
+        """定时全量刷新备忘看板 — 同步完成状态、清理脏数据。"""
+        try:
+            from cal.push_target import get_push_target_open_id
+            open_id = get_push_target_open_id() or ""
+            ok, url, stats = bitable_refresh_board(user_open_id=open_id)
+            if ok:
+                total = sum(stats.values())
+                _log(f"看板定时刷新完成: {total} 条 (今日{stats.get('today', 0)} 本周{stats.get('week', 0)} 待跟{stats.get('stale', 0)} 已完成{stats.get('done', 0)})")
+            else:
+                _log(f"看板定时刷新失败: {url}")
+        except Exception as e:
+            _log(f"看板定时刷新异常: {e}")
+
     try:
         import schedule as _s  # noqa: F401
         threading.Thread(target=_run_scheduler, daemon=True).start()
-        _log("定时推送已启用：08:00 晨报 / 18:00 收尾 / 周一 09:00 周报 / 每日 09:00 提醒检查")
+        _log("定时推送已启用：08:00 晨报 / 08:30+18:30 看板同步 / 18:00 收尾 / 周一 09:00 周报 / 每日 09:00 提醒检查")
     except ImportError:
         _log("定时推送已跳过：未安装 schedule")
 

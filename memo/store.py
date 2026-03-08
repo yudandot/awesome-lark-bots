@@ -74,6 +74,7 @@ def add_memo(
     reminder_date: Optional[str] = None,
     category: Optional[str] = None,
     thread: Optional[str] = None,
+    assignee: Optional[str] = None,
 ) -> str:
     now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     cat_key = _normalize_category(category)
@@ -85,6 +86,7 @@ def add_memo(
         "reminder_date": reminder_date or "",
         "category": cat_key or "",
         "thread": (thread or "").strip().lstrip("#"),
+        "assignee": (assignee or "").strip().lower(),
     }
     with _lock:
         items = _load_all_unlocked()
@@ -352,13 +354,15 @@ def export_board_data(
     _PARTITION_ORDER = {"今日新增": 0, "本周进行中": 1, "等待跟进": 2, "已完成": 3}
     stats = {"today": 0, "week": 0, "stale": 0, "done": 0}
 
-    headers = ["线程", "内容", "状态", "创建时间", "分区"]
+    headers = ["memo_id", "线程", "内容", "状态", "创建时间", "分区", "执行者"]
     rows: List[list[str]] = []
     for m in items:
+        memo_id = m.get("id") or ""
         thr = m.get("thread") or "(未分类)"
         content = (m.get("content") or "")[:120]
         created = (m.get("created_at") or "")[:10]
         created_full = m.get("created_at") or ""
+        assignee = m.get("assignee") or ""
 
         if m.get("done"):
             status = "✅ 已完成"
@@ -377,9 +381,9 @@ def export_board_data(
             partition = "等待跟进"
             stats["stale"] += 1
 
-        rows.append([thr, content, status, created, partition])
+        rows.append([memo_id, thr, content, status, created, partition, assignee])
 
-    rows.sort(key=lambda r: (_PARTITION_ORDER.get(r[4], 9), r[3]))
+    rows.sort(key=lambda r: (_PARTITION_ORDER.get(r[5], 9), r[4]))
     return headers, rows, stats
 
 
