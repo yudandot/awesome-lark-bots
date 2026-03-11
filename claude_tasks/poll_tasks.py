@@ -149,11 +149,15 @@ def scan_board(skip_noted: bool = True) -> dict:
     for rec in (records or []):
         fields = rec.get("fields") or {}
 
-        # 跳过已完成
+        # 状态处理
         status = fields.get("状态", "")
         if isinstance(status, dict):
             status = status.get("value", "") or status.get("name", "")
-        if status == "已完成":
+
+        partner_feedback = fields.get("搭档反馈", "") or ""
+
+        # 跳过已完成（但有搭档反馈的除外——需要重新处理）
+        if status == "已完成" and not partner_feedback.strip():
             continue
 
         assignee = fields.get("执行者", "")
@@ -161,7 +165,7 @@ def scan_board(skip_noted: bool = True) -> dict:
             assignee = assignee.get("value", "") or assignee.get("name", "")
 
         claude_note = fields.get("Claude备注", "") or ""
-        partner_feedback = fields.get("搭档反馈", "") or ""
+        # partner_feedback 已在上面提取
 
         # 有搭档反馈的任务始终保留（需要处理反馈）
         if skip_noted and claude_note.strip() and not partner_feedback.strip():
@@ -222,11 +226,10 @@ def poll_feedback() -> list[dict]:
         if not feedback.strip():
             continue
 
+        # 有反馈就保留，即使已完成（说明搭档要求改进）
         status = fields.get("状态", "")
         if isinstance(status, dict):
             status = status.get("value", "") or status.get("name", "")
-        if status == "已完成":
-            continue
 
         assignee = fields.get("执行者", "")
         if isinstance(assignee, dict):
