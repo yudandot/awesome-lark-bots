@@ -19,7 +19,9 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-_CONFIG_PATH = str(Path(__file__).resolve().parent.parent / "data" / "bitable_board.json")
+_DATA_DIR = str(Path(__file__).resolve().parent.parent / "data")
+_CONFIG_PATH = os.path.join(_DATA_DIR, "bitable_board.json")
+_SYNCED_IDS_PATH = os.path.join(_DATA_DIR, "board_synced_ids.json")
 _lock = threading.Lock()
 _migrated = False  # 单次运行只迁移一次
 
@@ -44,6 +46,35 @@ def _save_config(cfg: Dict[str, Any]) -> None:
     os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
     with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
+
+
+# ── 已同步 ID 追踪（防止删了又回来）────────────────────────
+
+def _load_synced_ids() -> set:
+    """加载曾经同步到 Bitable 的 memo_id 集合。"""
+    if not os.path.exists(_SYNCED_IDS_PATH):
+        return set()
+    try:
+        with open(_SYNCED_IDS_PATH, "r", encoding="utf-8") as f:
+            return set(json.load(f))
+    except (json.JSONDecodeError, IOError):
+        return set()
+
+
+def _save_synced_ids(ids: set) -> None:
+    os.makedirs(os.path.dirname(_SYNCED_IDS_PATH), exist_ok=True)
+    with open(_SYNCED_IDS_PATH, "w", encoding="utf-8") as f:
+        json.dump(sorted(ids), f)
+
+
+def _mark_synced(memo_id: str) -> None:
+    """标记一个 memo_id 已同步过（线程安全）。"""
+    if not memo_id:
+        return
+    with _lock:
+        ids = _load_synced_ids()
+        ids.add(memo_id)
+        _save_synced_ids(ids)
 
 
 # ── 表定义 ────────────────────────────────────────────────────
@@ -240,15 +271,15 @@ def refresh_board(
     user_open_id: str = "",
     thread: Optional[str] = None,
 ) -> Tuple[bool, str, Dict[str, int]]:
-    """智能刷新看板：按 memo_id 匹配，有则更新、无则新增、多余删除。
+    """刷新看板（以 Bitable 为真相源）。
 
     流程：
       0. 反向同步 — 用户在 Bitable 手动改的状态回写 memos.json
-      1. 获取本地最新数据（已包含反向同步的结果）
-      2. Upsert — 有则更新、无则新增
-      3. 清理 — 删除本地已不存在的记录
+      1. 获取本地最新数据
+      2. Upsert — 已有则更新，新增则创建（但绝不重建被删除的记录）
+      ❌ 不再删除 Bitable 记录（以看板为准）
 
-    不会覆盖 Claude备注 字段（由 Claude Code 单独管理）。
+    不会覆盖 Claude备注 / 搭档反馈 字段。
 
     Returns: (ok, url_or_error, stats)
     """
@@ -257,7 +288,6 @@ def refresh_board(
         add_bitable_record,
         list_bitable_records,
         update_bitable_record,
-        batch_delete_bitable_records,
     )
 
     ok, url = ensure_board()
@@ -284,13 +314,17 @@ def refresh_board(
         if rev_synced:
             _log(f"反向同步完成: {rev_synced} 条状态变更已写回本地")
 
+    # 加载曾同步过的 memo_id（用于防止删了又回来）
+    synced_ids = _load_synced_ids()
+    # 当前 Bitable 里有的 memo_id 也算同步过
+    synced_ids.update(existing_map.keys())
+
     # ① 获取本地最新数据（反向同步后的，跳过已完成项）
     headers, rows, stats = export_board_data(
         user_open_id=user_open_id, thread=thread, skip_done=True,
     )
 
     # ② Upsert：遍历本地数据
-    seen_memo_ids = set()
     updated = 0
     created = 0
     for row in rows:
@@ -298,29 +332,27 @@ def refresh_board(
         fields = _row_to_fields(row)
 
         if memo_id and memo_id in existing_map:
-            # 已有记录 → 更新（不覆盖 Claude备注）
+            # 已有记录 → 更新（不覆盖 Claude备注/搭档反馈）
             record_id = existing_map[memo_id]
             update_bitable_record(app, tid, record_id, fields)
-            seen_memo_ids.add(memo_id)
+            synced_ids.add(memo_id)
             updated += 1
+        elif memo_id and memo_id in synced_ids:
+            # 曾经同步过但已被从 Bitable 删除 → 不重建（尊重看板删除）
+            pass
         else:
-            # 新记录 → 创建
+            # 全新记录（从未同步过）→ 创建
             add_bitable_record(app, tid, fields)
             if memo_id:
-                seen_memo_ids.add(memo_id)
+                synced_ids.add(memo_id)
             created += 1
 
-    # ③ 清理：删除本地已不存在的记录（但保留无 memo_id 的旧记录）
-    stale_record_ids = [
-        rid for mid, rid in existing_map.items()
-        if mid and mid not in seen_memo_ids
-    ]
-    deleted = 0
-    if stale_record_ids:
-        batch_delete_bitable_records(app, tid, stale_record_ids)
-        deleted = len(stale_record_ids)
+    # ❌ 不再删除 Bitable 记录（以看板为准）
 
-    _log(f"看板刷新完成: 更新{updated} 新增{created} 删除{deleted} (共{len(rows)}条)")
+    # 持久化同步记录
+    _save_synced_ids(synced_ids)
+
+    _log(f"看板刷新完成: 更新{updated} 新增{created} 跳过已删{len(synced_ids) - len(existing_map) - created}")
     return True, url, stats
 
 
@@ -360,7 +392,10 @@ def append_board_record(
         fields["执行者"] = display
 
     try:
-        return add_bitable_record(app, tid, fields)
+        ok_add, result = add_bitable_record(app, tid, fields)
+        if ok_add and memo_id:
+            _mark_synced(memo_id)
+        return ok_add, result
     except Exception as e:
         _log(f"追加看板记录异常: {e}")
         return False, str(e)
